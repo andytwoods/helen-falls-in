@@ -209,7 +209,9 @@ async function boot(): Promise<void> {
       hudTime.textContent = formatTime(state.t);
     }
     renderer.draw(
-      prevState,
+      // interpolate only while the sim advances — blending two stale states
+      // with a moving alpha makes the frozen world (pub stops) shiver
+      phase === 'riding' ? prevState : state,
       state,
       acc / DT,
       params,
