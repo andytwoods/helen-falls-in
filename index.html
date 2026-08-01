@@ -106,6 +106,24 @@
       padding: 9px; font-size: 13px; cursor: pointer;
     }
     #pub-buttons button:disabled { background: #2a3347; color: #5a6478; cursor: default; }
+    #drinks {
+      position: fixed;
+      left: 0;
+      right: 0;
+      bottom: 26vh;
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      z-index: 3;
+    }
+    #drinks.show { display: flex; }
+    #drinks button {
+      background: #8a6a2c; color: #fff; border: none; border-radius: 8px;
+      padding: 10px 16px; font-size: 13px; cursor: pointer; width: 250px;
+      font-family: inherit;
+    }
+    #drinks button.lemonade { background: #33415c; }
     #sound-toggle {
       position: fixed;
       bottom: calc(10px + env(safe-area-inset-bottom));
@@ -139,15 +157,17 @@
         The whole ride takes about ten minutes — if she stays out of the water.
       </p>
       <p>
-        Touch and hold — <b>left side leans left, right side leans right</b>
-        (← / → on a computer). Hold longer, lean harder; over-correcting is the
-        whole danger. Release; breathe. Falling in is allowed: climb out, carry
-        on. Reach a pub and you can start from it next time.
+        Falling in is allowed: climb out, carry on. Reach a pub and you can
+        start from it next time — what Helen drinks there is up to you.
       </p>
       <p class="zen">This game is a small meditation. (For you. Perhaps less so for Helen!)</p>
       <div id="intro-best"></div>
       <div id="pub-buttons"></div>
     </div>
+  </div>
+  <div id="drinks">
+    <button id="drink-cocktail"></button>
+    <button id="drink-lemonade" class="lemonade">🥤 A sensible lemonade</button>
   </div>
   <button id="sound-toggle">🔊</button>
   <script type="module" src="/src/main.ts"></script>

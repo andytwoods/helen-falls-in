@@ -33,6 +33,29 @@ let aftermath: { cause: 'canal' | 'ditch' | 'tree' | 'bush' | 'hedge'; end: numb
 
 const hudTime = document.getElementById('hud-time')!;
 const hudFalls = document.getElementById('hud-best')!;
+const drinksEl = document.getElementById('drinks')!;
+const drinkCocktailBtn = document.getElementById('drink-cocktail') as HTMLButtonElement;
+const drinkLemonadeBtn = document.getElementById('drink-lemonade') as HTMLButtonElement;
+
+const COCKTAILS = [
+  'Negroni',
+  'Espresso Martini',
+  'Piña Colada',
+  'Mojito',
+  'Old Fashioned',
+  'Aperol Spritz',
+  'Margarita',
+  'Mai Tai',
+  'Dark ’n’ Stormy',
+  'Whisky Sour',
+  'Pornstar Martini',
+];
+let cocktails = 0;
+
+function updateHud(): void {
+  hudFalls.textContent =
+    fallsText() + (state.booze > 0 ? ' · ' + '🍸'.repeat(Math.min(5, state.booze)) : '');
+}
 const overlay = document.getElementById('overlay')!;
 const overlayText = document.getElementById('overlay-text')!;
 const intro = document.getElementById('intro')!;
@@ -77,11 +100,13 @@ function startJourney(pubIdx: number): void {
   state.d = PUBS[pubIdx]!.d;
   prevState = { ...state };
   falls = 0;
+  cocktails = 0;
   startPub = pubIdx;
   nextPub = pubIdx + 1;
   aftermath = null;
+  drinksEl.classList.remove('show');
   telemetry.startRun();
-  hudFalls.textContent = fallsText();
+  updateHud();
   intro.classList.add('hidden');
   overlay.classList.remove('show');
   phase = 'riding';
@@ -99,7 +124,7 @@ function die(): void {
   phase = 'dead';
   cardAt = performance.now();
   falls++;
-  hudFalls.textContent = fallsText();
+  updateHud();
   const cause = state.cause ?? 'canal';
   telemetry.endRun(seed, state.t, cause, params);
   if (cause === 'canal' || cause === 'croc') audio.splash();
@@ -146,18 +171,35 @@ function arriveAtPub(): void {
     if (startPub === 0) recordJourney(state.t, falls);
     showCard(
       `<b>🍺 ${pub.name}</b><br>Journey's end.<br><br>` +
-        `${formatTime(state.t)} &nbsp;·&nbsp; ${fallsText()}<br><br>tap for a well-earned sit down`,
+        `${formatTime(state.t)} &nbsp;·&nbsp; ${fallsText()} &nbsp;·&nbsp; ` +
+        `${cocktails} cocktail${cocktails === 1 ? '' : 's'}<br><br>tap for a well-earned sit down`,
       400,
     );
   } else {
     phase = 'pub';
+    drinkCocktailBtn.textContent = `🍹 ${COCKTAILS[Math.floor(Math.random() * COCKTAILS.length)]}`;
+    drinksEl.classList.add('show');
     showCard(
-      `<b>🍺 ${pub.name}</b><br>A swift lemonade for Helen.<br><br>` +
-        `${formatTime(state.t)} &nbsp;·&nbsp; ${fallsText()}<br><br>tap to ride on`,
+      `<b>🍺 ${pub.name}</b><br>What'll it be?<br><br>` +
+        `${formatTime(state.t)} &nbsp;·&nbsp; ${fallsText()}`,
       400,
     );
     nextPub++;
   }
+}
+
+function chooseDrink(alcoholic: boolean): void {
+  if (phase !== 'pub') return;
+  if (alcoholic) {
+    state.booze++;
+    cocktails++;
+  } else {
+    state.booze = Math.max(0, state.booze - 1); // sobering, mercifully
+  }
+  updateHud();
+  drinksEl.classList.remove('show');
+  overlay.classList.remove('show');
+  phase = 'riding';
 }
 
 async function boot(): Promise<void> {
@@ -175,10 +217,8 @@ async function boot(): Promise<void> {
       }
       if (performance.now() - cardAt < TAP_LOCKOUT_S * 1000) return;
       if (phase === 'dead') climbBackOn();
-      else if (phase === 'pub') {
-        overlay.classList.remove('show');
-        phase = 'riding';
-      } else if (phase === 'done') showIntro();
+      else if (phase === 'done') showIntro();
+      // 'pub' waits for a drink choice — the buttons handle it
     },
     onUp: () => {
       if (phase !== 'riding') return;
@@ -188,6 +228,17 @@ async function boot(): Promise<void> {
   });
 
   attachSoundToggle(audio);
+  for (const [btn, alcoholic] of [
+    [drinkCocktailBtn, true],
+    [drinkLemonadeBtn, false],
+  ] as const) {
+    btn.addEventListener('pointerdown', (e) => e.stopPropagation());
+    btn.addEventListener('pointerup', (e) => e.stopPropagation());
+    btn.addEventListener('click', () => {
+      chooseDrink(alcoholic);
+      btn.blur();
+    });
+  }
   showIntro();
 
   let last = performance.now();

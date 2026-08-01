@@ -29,6 +29,7 @@ export interface SimState {
   lastReleaseT: number; // time of last release, for resample hysteresis
   halfW: number; // current corridor half-width, px — x is normalised to this
   speedFactor: number; // 1 normally; >1 mid-downhill
+  booze: number; // cocktails minus lemonades: wobble scales with it, plus a weave
 }
 
 // canal: fell in the water (right). croc: pulled in (late journey). The rest
@@ -39,7 +40,7 @@ export function createState(): SimState {
   return {
     x: 0, vx: 0, steer: 0, dir: 1, hold: 0, held: false,
     noise: 0, drift: 0, t: 0, d: 0, alive: true, fellSide: 0, cause: null, lastReleaseT: -1e9,
-    halfW: PATH_HALF_W_PX, speedFactor: 1,
+    halfW: PATH_HALF_W_PX, speedFactor: 1, booze: 0,
   };
 }
 
@@ -172,10 +173,14 @@ export function step(s: SimState, p: Params, gaussian: () => number, path: PathS
     }
   }
 
+  // cocktails: every one amplifies the wobble and adds a slow drunken weave
+  const boozy = 1 + 0.35 * Math.min(5, s.booze);
+  const weave = Math.sin(s.t * 0.8) * 0.1 * Math.min(5, s.booze);
   const a =
     (p.steeringAcceleration * s.steer * controlScale +
-      p.wobbleStrength * ramp * s.noise * wobbleScale +
-      p.driftStrength * ramp * s.drift +
+      p.wobbleStrength * ramp * s.noise * wobbleScale * boozy +
+      p.driftStrength * ramp * s.drift * boozy +
+      weave +
       grooveA) *
     widthScale;
 
