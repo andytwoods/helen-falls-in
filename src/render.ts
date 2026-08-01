@@ -327,8 +327,8 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
     Math.sin(D * 0.013) * 4 + Math.sin(D * 0.041) * 2 + (hash01(Math.floor(D / 2) * 3) - 0.5) * 2;
 
   // the canal's far bank wanders — broad here, tighter there — but the water
-  // never narrows below ~60px (six Helens abreast)
-  const farBankLat = (D: number) => 100 + Math.sin(D * 0.0021 + 1.3) * 10 + Math.sin(D * 0.00047) * 6;
+  // never narrows below ~86px: a proper river of it
+  const farBankLat = (D: number) => 130 + Math.sin(D * 0.0021 + 1.3) * 12 + Math.sin(D * 0.00047) * 8;
 
   // A canalside pub: building axis-aligned at its anchor, garden furniture and
   // spur laid out along the path frame.
@@ -465,12 +465,15 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       quad(g, path, D - 2, D, -2, 2, PAL.pathEdge);
     }
 
-    // ripples, world-anchored
+    // ripples, world-anchored, spread across the whole width of the water
     for (let D = Math.ceil(lo / 24) * 24; D <= hi; D += 24) {
-      const R1 = fw(path, D + 6, path.halfWidthAt(D) + 18);
-      const R2 = fw(path, D + 16, path.halfWidthAt(D) + 34);
-      g.rect(R1.x, R1.y, 8, 1).fill(PAL.waterRipple);
-      g.rect(R2.x, R2.y, 6, 1).fill(PAL.waterRipple);
+      const hwR = path.halfWidthAt(D);
+      const span = farBankLat(D) - hwR - 18;
+      for (let k = 0; k < 3; k++) {
+        const rh = hash01((D / 24) * 31 + k * 7);
+        const R = fw(path, D + 5 + k * 6, hwR + 10 + rh * span);
+        g.rect(R.x, R.y, 5 + rh * 4, 1).fill(PAL.waterRipple);
+      }
     }
 
     // meadow patches
@@ -563,7 +566,10 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       if (lr < 0.55) continue;
       const lD = n * 52 + lr * 30;
       if (lD < lo || lD > hi) continue;
-      const P = fw(path, lD, path.halfWidthAt(lD) + 6 + hash01(n * 31) * 9);
+      // lilies hug whichever bank this one seeded to
+      const lat3 =
+        hash01(n * 37) > 0.5 ? path.halfWidthAt(lD) + 6 + hash01(n * 31) * 9 : farBankLat(lD) - 7 - hash01(n * 31) * 9;
+      const P = fw(path, lD, lat3);
       g.rect(P.x, P.y, 4, 3).fill(PAL.lily);
       g.rect(P.x, P.y, 2, 1).fill(PAL.lilyLight);
       g.rect(P.x + 3, P.y + 2, 1, 1).fill(PAL.waterBase);
@@ -703,7 +709,7 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       const gh = hash01(n * 3 + Math.floor(t * 2));
       if (gh < 0.2) {
         const hw10 = path.halfWidthAt(n * 10);
-        const P = fw(path, n * 10, Math.min(hw10 + 10 + gh * 60, farBankLat(n * 10) - 5));
+        const P = fw(path, n * 10, hw10 + 8 + gh * (farBankLat(n * 10) - hw10 - 14));
         if (visible(P.x, P.y)) dynamicW.rect(P.x, P.y, 3, 1).fill(PAL.waterGlint);
       }
     }
@@ -772,7 +778,8 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       const fr = hash01(n * 73 + 19);
       if (fr < 0.5) continue;
       const fD = n * 150 + fr * 60;
-      const lat = Math.min(path.halfWidthAt(fD) + 16 + hash01(n * 77) * 70, farBankLat(fD) - 7);
+      const hwF = path.halfWidthAt(fD);
+      const lat = hwF + 14 + hash01(n * 77) * (farBankLat(fD) - hwF - 22);
       const P = fw(path, fD + Math.sin(t * 0.4 + fr * 9) * 10, lat + Math.sin(t * 0.27 + fr * 4) * 6);
       if (!visible(P.x, P.y)) continue;
       const jump = fr > 0.78 ? (t * 0.11 + fr * 5) % 1 : 1; // some fish are show-offs
@@ -801,7 +808,8 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       const rr = hash01(n * 151 + 7);
       if (rr < 0.55) continue;
       const bD = n * 2800 + rr * 500 - t * 6; // gliding gently the other way
-      const P = fw(path, bD, Math.min(path.halfWidthAt(bD) + 30 + hash01(n * 157) * 45, farBankLat(bD) - 12));
+      const hwB = path.halfWidthAt(bD);
+      const P = fw(path, bD, hwB + 24 + hash01(n * 157) * (farBankLat(bD) - hwB - 40));
       if (!visible(P.x, P.y)) continue;
       dynamicW.rect(P.x - 2, P.y - 7, 4, 14).fill(0x8a6a42); // hull
       dynamicW.rect(P.x - 1, P.y - 9, 2, 2).fill(0x8a6a42); // bow
@@ -872,10 +880,11 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       const dr = hash01(n * 67 + 8);
       if (dr < 0.5) continue;
       const dD = n * 240 + dr * 90;
+      const hwD = path.halfWidthAt(dD);
       const P = fw(
         path,
         dD,
-        Math.min(path.halfWidthAt(dD) + 26 + Math.sin(t * 0.35 + dr * 8) * 8 + dr * 24, farBankLat(dD) - 9),
+        hwD + 16 + dr * (farBankLat(dD) - hwD - 28) + Math.sin(t * 0.35 + dr * 8) * 6,
       );
       if (!visible(P.x, P.y)) continue;
       const moorhen = dr > 0.85;
