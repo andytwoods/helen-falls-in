@@ -2,12 +2,13 @@ import { audio } from './audio';
 import { attachButton } from './input';
 import { createPath, type PathCurve } from './path';
 import { createRenderer } from './render';
+import { DEFAULT_PARAMS } from './params';
 import { createState, press, release, step, DT, type SimState } from './sim';
 import { gaussianFrom, mulberry32 } from './rng';
 import { Telemetry } from './telemetry';
-import { buildPanel, loadParams } from './ui';
+import { attachSoundToggle } from './ui';
 
-const params = loadParams();
+const params = { ...DEFAULT_PARAMS };
 const telemetry = new Telemetry();
 
 const RESTART_LOCKOUT_S = 0.5;
@@ -88,7 +89,7 @@ async function boot(): Promise<void> {
     },
   });
 
-  buildPanel(params, () => telemetry.download(), audio);
+  attachSoundToggle(audio);
   telemetry.startRun();
 
   let last = performance.now();

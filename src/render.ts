@@ -542,6 +542,61 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       dynamic.rect(wx - 2, y0 + 1, 2, 1).fill(PAL.waterRipple); // wake
     }
 
+    // the stupid stork: lands IN THE ROAD ahead, waits until Helen is nearly on
+    // it, flaps lazily another hop up the path, and only clears off for good
+    // after the third time. Position is a pure function of d — replay-exact.
+    for (let n = Math.floor((d - 800) / 2200); n <= Math.floor((d + helenY) / 2200) + 1; n++) {
+      const sr = hash01(n * 79 + 3);
+      if (sr < 0.45) continue;
+      const TRIG = 105; // how close Helen gets before it deigns to move
+      const FLY = 70; // px of Helen-travel per unhurried hop
+      const hop1 = 170 + hash01(n * 83 + 1) * 60;
+      const hop2 = 170 + hash01(n * 83 + 2) * 60;
+      const sits = [n * 2200 + 900 + sr * 300, 0, 0];
+      sits[1] = sits[0]! + hop1;
+      sits[2] = sits[1]! + hop2;
+      let birdD: number;
+      let airborne = 0; // 0 grounded → 1 mid-hop
+      let leaving = 0;
+      if (d < sits[0]! - TRIG) {
+        birdD = sits[0]!;
+      } else if (d < sits[2]! - TRIG) {
+        const k = d < sits[1]! - TRIG ? 0 : 1;
+        const f = Math.min(1, (d - (sits[k]! - TRIG)) / FLY);
+        birdD = sits[k]! + (sits[k + 1]! - sits[k]!) * f * f * (3 - 2 * f);
+        airborne = f < 1 ? Math.sin(f * Math.PI) : 0;
+      } else {
+        // third approach: fine, FINE — actually leaves
+        leaving = (d - (sits[2]! - TRIG)) / (FLY * 2.2);
+        if (leaving >= 1) continue;
+        birdD = sits[2]! + leaving * 320;
+        airborne = 1;
+      }
+      const sy = helenY - (birdD - d) - leaving * leaving * 120;
+      if (sy < -16 || sy > viewH + 16) continue;
+      const sx = centreX + path.centreAt(birdD) + (hash01(n * 89) - 0.5) * 14 + (airborne ? Math.sin(d * 0.09) * 2 : 0);
+      const flap = airborne > 0.05 && Math.floor(t * 9) % 2 === 0;
+      if (airborne > 0.05) {
+        // wings out, legs trailing behind
+        dynamic.rect(sx - (flap ? 6 : 4), sy, flap ? 12 : 8, 2).fill(0xf0ece0);
+        dynamic.rect(sx - (flap ? 6 : 4), sy, 2, 2).fill(0x3a3a44); // black wingtips
+        dynamic.rect(sx + (flap ? 4 : 2), sy, 2, 2).fill(0x3a3a44);
+        dynamic.rect(sx - 1, sy + 2, 1, 3).fill(0x4a4a52); // trailing legs
+        dynamic.rect(sx, sy - 2, 2, 2).fill(0xf0ece0); // head forward
+        dynamic.rect(sx + 1, sy - 3, 2, 1).fill(0xe8a13d); // beak
+      } else {
+        // standing in the road, gormless
+        dynamic.rect(sx - 1, sy + 3, 1, 4).fill(0x4a4a52); // legs
+        dynamic.rect(sx + 1, sy + 3, 1, 4).fill(0x4a4a52);
+        dynamic.rect(sx - 2, sy, 5, 3).fill(0xf0ece0); // body
+        dynamic.rect(sx + 2, sy + 1, 1, 2).fill(0x3a3a44); // folded black wingtip
+        dynamic.rect(sx - 1, sy - 4, 1, 4).fill(0xf0ece0); // neck
+        dynamic.rect(sx - 2, sy - 5, 2, 2).fill(0xf0ece0); // head
+        const peer = Math.floor(t * 2 + sr * 9) % 4 === 0 ? 1 : 0; // peers about
+        dynamic.rect(sx - 3 - peer, sy - 4, 2, 1).fill(0xe8a13d); // beak
+      }
+    }
+
     // a heron on the bank, rare — stands tall, flaps off as Helen approaches
     for (let n = Math.floor((d + helenY - viewH) / 1400) - 1; n <= Math.floor((d + helenY) / 1400) + 2; n++) {
       const hr = hash01(n * 71 + 6);

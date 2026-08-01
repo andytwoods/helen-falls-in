@@ -7,8 +7,20 @@
 const MASTER_VOL = 0.35;
 const STORAGE_KEY = 'hfi-muted';
 
-// A-major pentatonic across three octaves — no wrong notes, pastoral by default
+// A-major pentatonic across two-and-a-bit octaves — no wrong notes, pastoral
 const SCALE = [220.0, 246.94, 277.18, 329.63, 369.99, 440.0, 493.88, 554.37, 659.25, 739.99, 880.0];
+
+// The music is phrase-based, not random notes: a slow 4-chord cycle, and each
+// phrase a lilting rhythm (quarter/dotted/half) whose melody random-walks in
+// small steps and resolves onto a tone of the current chord.
+const EIGHTH = 60 / 64 / 2; // 64 BPM
+const PHRASE_EIGHTHS = 16; // two bars per phrase / per chord
+const CHORDS = [
+  { tones: [0, 2, 3, 5, 7, 8, 10], pad: [164.81, 220.0, 277.18], bass: 110.0 }, // A
+  { tones: [0, 4, 5, 9, 10], pad: [146.83, 185.0, 220.0], bass: 73.42 }, // D
+  { tones: [0, 2, 4, 5, 7, 9, 10], pad: [138.59, 185.0, 220.0], bass: 92.5 }, // F#m
+  { tones: [1, 3, 6, 8], pad: [123.47, 164.81, 246.94], bass: 82.41 }, // E
+];
 
 class GameAudio {
   private ctx: AudioContext | null = null;
@@ -16,7 +28,9 @@ class GameAudio {
   private musicBus!: GainNode;
   private sfxBus!: GainNode;
   private schedulerId: number | null = null;
-  private nextNoteAt = 0;
+  private nextPhraseAt = 0;
+  private chordStep = 0;
+  private lastDegree = 5;
   muted = localStorage.getItem(STORAGE_KEY) === '1';
 
   // Must be called synchronously from a user gesture (iOS starts suspended).
@@ -56,9 +70,8 @@ class GameAudio {
     this.sfxBus.gain.value = 0.9;
     this.sfxBus.connect(this.master);
 
-    this.startDrone();
-    this.nextNoteAt = ctx.currentTime + 0.4;
-    this.schedulerId = window.setInterval(() => this.schedule(), 200);
+    this.nextPhraseAt = ctx.currentTime + 0.3;
+    this.schedulerId = window.setInterval(() => this.schedule(), 250);
 
     document.addEventListener('visibilitychange', () => {
       if (!this.ctx) return;
@@ -76,56 +89,69 @@ class GameAudio {
     return this.muted;
   }
 
-  // ---- generative music ----
-
-  private startDrone(): void {
-    const ctx = this.ctx!;
-    // two barely-detuned sines an octave apart, breathing slowly
-    for (const [freq, vol] of [
-      [110, 0.05],
-      [110.4, 0.035],
-      [164.81, 0.03],
-    ] as const) {
-      const osc = ctx.createOscillator();
-      osc.type = 'sine';
-      osc.frequency.value = freq;
-      const g = ctx.createGain();
-      g.gain.value = vol;
-      const lfo = ctx.createOscillator();
-      lfo.frequency.value = 0.05 + Math.random() * 0.04;
-      const lfoGain = ctx.createGain();
-      lfoGain.gain.value = vol * 0.4;
-      lfo.connect(lfoGain);
-      lfoGain.connect(g.gain);
-      osc.connect(g);
-      g.connect(this.musicBus);
-      osc.start();
-      lfo.start();
-    }
-  }
+  // ---- generative music: phrase-based, chord-aware ----
 
   private schedule(): void {
     const ctx = this.ctx!;
-    while (this.nextNoteAt < ctx.currentTime + 0.7) {
-      if (Math.random() < 0.75) this.playNote(this.nextNoteAt);
-      // unhurried, irregular phrasing
-      this.nextNoteAt += [0.8, 1.0, 1.2, 1.6, 2.0][Math.floor(Math.random() * 5)]!;
+    while (this.nextPhraseAt < ctx.currentTime + 1.2) {
+      this.schedulePhrase(this.nextPhraseAt);
+      this.nextPhraseAt += PHRASE_EIGHTHS * EIGHTH;
     }
   }
 
-  private playNote(at: number): void {
+  private schedulePhrase(at: number): void {
+    const chord = CHORDS[this.chordStep % CHORDS.length]!;
+    this.chordStep++;
+
+    // harmony: a soft pad chord and a quiet bass root under the whole phrase
+    const phraseDur = PHRASE_EIGHTHS * EIGHTH;
+    for (const f of chord.pad) this.padTone(f, at, phraseDur + 1.2, 0.026);
+    this.padTone(chord.bass, at, phraseDur + 0.8, 0.05);
+
+    // every 4th phrase the melody rests — the tune needs room to breathe
+    if (this.chordStep % 4 === 0 && Math.random() < 0.6) return;
+
+    // rhythm: a lilt built from quarters, dotted-quarters and halves
+    const onsets: number[] = [];
+    let pos = Math.random() < 0.3 ? 2 : 0;
+    while (pos < PHRASE_EIGHTHS - 2) {
+      onsets.push(pos);
+      pos += [2, 2, 3, 3, 4][Math.floor(Math.random() * 5)]!;
+    }
+
+    // melody: small-step random walk, resolving onto a chord tone at both ends
+    const snap = (deg: number) =>
+      chord.tones.reduce((best, tone) => (Math.abs(tone - deg) < Math.abs(best - deg) ? tone : best), chord.tones[0]!);
+    let degree = snap(this.lastDegree);
+    onsets.forEach((onset, i) => {
+      const last = i === onsets.length - 1;
+      if (i > 0) {
+        degree += [-2, -1, -1, 1, 1, 2][Math.floor(Math.random() * 6)]!;
+        degree = Math.max(1, Math.min(SCALE.length - 2, degree));
+        // strong beats and phrase-ends lean home to the chord
+        if (last || (onset % 4 === 0 && Math.random() < 0.6)) degree = snap(degree);
+      }
+      const detune = 1 + (Math.random() - 0.5) * 0.004;
+      const vol = (onset % 4 === 0 ? 0.09 : 0.065) * (last ? 1.15 : 1);
+      this.pluck(SCALE[degree]! * detune, at + onset * EIGHTH, vol);
+    });
+    this.lastDegree = degree;
+  }
+
+  private padTone(freq: number, at: number, dur: number, vol: number): void {
     const ctx = this.ctx!;
-    const idx = Math.floor(Math.random() * SCALE.length);
-    const detune = 1 + (Math.random() - 0.5) * 0.004; // gentle humanisation
-    this.pluck(SCALE[idx]! * detune, at, 0.08 + Math.random() * 0.05);
-    // occasionally a consonant partner a third or fourth below, quieter
-    if (Math.random() < 0.3 && idx >= 2) {
-      this.pluck(SCALE[idx - 2]! * detune, at + 0.05, 0.05);
-    }
-    // rare high sparkle, very quiet
-    if (Math.random() < 0.12) {
-      this.pluck(SCALE[Math.min(SCALE.length - 1, idx + 5)]!, at + 0.4, 0.03);
-    }
+    const osc = ctx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.value = freq;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, at);
+    g.gain.linearRampToValueAtTime(vol, at + 1.8); // very slow bloom
+    g.gain.setValueAtTime(vol, at + dur - 1.5);
+    g.gain.exponentialRampToValueAtTime(0.0001, at + dur);
+    osc.connect(g);
+    g.connect(this.musicBus);
+    osc.start(at);
+    osc.stop(at + dur + 0.1);
   }
 
   private pluck(freq: number, at: number, vol: number): void {
