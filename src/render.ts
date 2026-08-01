@@ -81,13 +81,13 @@ const HELEN_MAP = [
   '....TT....',
   '....HH....',
   'BssHHHHssB',
-  '.rrYYYYrr.',
-  '.rYyyyyYr.',
+  '...YYYY...',
+  '..YyyyyY..',
   '.YyyyyyyY.',
   '.YyyYyyyY.',
   '.YyyyyyyY.',
-  '.rYyyyyYr.',
-  '.rrYYYYrr.',
+  '..YyyyyY..',
+  '...YYYY...',
   '..Rrrrrr..',
   '...bbbb...',
   '...BBBB...',
@@ -679,12 +679,14 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
     const bob = Math.round(Math.sin(e * 2.6));
     const hy = wy + bob;
 
-    // just her eyes above the water
+    // just her (blue) eyes above the water, looking up at the frog
     dynamic.rect(cx - 20, hy - 6, 40, 6).fill(0xe8b48c);
-    dynamic.rect(cx - 13, hy - 5, 6, 4).fill(0x2e2e38);
-    dynamic.rect(cx + 7, hy - 5, 6, 4).fill(0x2e2e38);
-    dynamic.rect(cx - 12, hy - 5, 2, 2).fill(0xf5f2e8); // glints: looking up at the frog
-    dynamic.rect(cx + 8, hy - 5, 2, 2).fill(0xf5f2e8);
+    for (const ex of [-13, 7]) {
+      dynamic.rect(cx + ex, hy - 5, 6, 4).fill(0xf5f2e8); // sclera
+      dynamic.rect(cx + ex + 1, hy - 5, 4, 3).fill(0x3f6fd6); // blue iris, raised
+      dynamic.rect(cx + ex + 2, hy - 4, 2, 2).fill(0x2e2e38); // pupil
+      dynamic.rect(cx + ex + 1, hy - 5, 1, 1).fill(0xffffff); // glint
+    }
     // waterline lapping at her
     dynamic.rect(cx - 24, hy, 48, 2).fill(PAL.waterGlint);
 
@@ -761,7 +763,7 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
     helen.visible = !splashing;
     if (splashing) {
       if (deathElapsed < 0.55) drawSplashScene(deathElapsed, curr, path);
-      else if (deathElapsed < 2.05) drawCutscene(deathElapsed);
+      else drawCutscene(deathElapsed); // backdrop until restart; card sits on top
     }
 
     // Helen: interpolate sim states for smooth render at any refresh rate.
@@ -772,10 +774,6 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
     // drawn tilt IS the sampled orientation — pressing counters exactly what you see
     const lean = lerp(visualLean(prev, p), visualLean(curr, p), alpha);
     helen.rotation = Math.max(-0.9, Math.min(0.9, lean));
-
-    // telegraph the ramp: past ~0.25s of hold the bike shifts towards red
-    const danger = curr.held ? Math.min(1, Math.max(0, (curr.hold - 0.25) / 0.5)) : 0;
-    bike.tint = danger > 0 ? 0xffffff - Math.floor(danger * 0x00a0a0) : 0xffffff;
   }
 
   return { app, draw };
