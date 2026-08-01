@@ -68,6 +68,10 @@ export interface PathCurve {
   // A hit wobbles (dir = kick direction) — rude, not fatal.
   gorillasNear(d0: number, d1: number): Array<{ d: number; impactD: number; lat: number; dir: number }>;
   pooImpactsBetween(d0: number, d1: number): Array<{ d: number; lat: number; dir: number }>;
+  // Root trees: the occasional big tree hard against the path, its roots
+  // crossing the surface — each root is a small bump-like kick.
+  rootTreesNear(d0: number, d1: number): Array<{ d: number; seed: number }>;
+  rootKicksBetween(d0: number, d1: number): Bump[];
 }
 
 // The towpath gets busier (and stranger) as Godalming nears.
@@ -298,6 +302,32 @@ export function createPath(seed: number, meander: number, narrow: number, downhi
     }
   }
 
+  const rtrand = mulberry32(seed ^ 0x452821e6);
+  const rootTrees: Array<{ d: number; seed: number }> = [];
+  const rootKicks: Bump[] = [];
+  {
+    let c = 1400;
+    while (c < SAMPLE_TO - 2000) {
+      c += 1500 + rtrand() * 2200;
+      const rSeed = rtrand();
+      if (rtrand() < 0.45 || nearPub(c, 130) || widthFactor(c) < 0.95) continue;
+      rootTrees.push({ d: c, seed: rSeed });
+      // three roots, three little jolts (scaled by params.bumpKick in the sim)
+      for (const [off, k] of [
+        [-10, 0.55],
+        [-1, 0.75],
+        [9, 0.5],
+      ] as const) {
+        rootKicks.push({ d: c + off, kick: (rSeed > 0.5 ? 1 : -1) * (k + rSeed * 0.2) });
+      }
+    }
+    rootKicks.sort((a, b) => a.d - b.d);
+  }
+  const nearRootTree = (d: number, range: number) => {
+    const i = lastAtOrBefore(rootTrees, d + range, (r) => r.d);
+    return i >= 0 && Math.abs(rootTrees[i]!.d - d) < range;
+  };
+
   const grand2 = mulberry32(seed ^ 0x1f83d9ab);
   const gorillas: Array<{ d: number; impactD: number; lat: number; dir: number }> = [];
   {
@@ -385,7 +415,7 @@ export function createPath(seed: number, meander: number, narrow: number, downhi
       return PATH_HALF_W_PX * widthFactor(d);
     },
     ditchWidthAt(d) {
-      if (nearPub(d, 60)) return 0;
+      if (nearPub(d, 60) || nearRootTree(d, 45)) return 0;
       const slot = Math.floor(d / DITCH_SLOT_PX);
       const r = mulberry32(((slot ^ seed) ^ 0x2c9277b5) >>> 0);
       if (r() >= DITCH_CHANCE) return 0;
@@ -451,6 +481,20 @@ export function createPath(seed: number, meander: number, narrow: number, downhi
       const out: Array<{ meetD: number; side: number }> = [];
       for (let i = lastAtOrBefore(meets, d0, (m) => m.meetD) + 1; i < meets.length && meets[i]!.meetD <= d1; i++) {
         out.push(meets[i]!);
+      }
+      return out;
+    },
+    rootTreesNear(d0, d1) {
+      const out: Array<{ d: number; seed: number }> = [];
+      for (let i = lastAtOrBefore(rootTrees, d0, (r) => r.d) + 1; i < rootTrees.length && rootTrees[i]!.d <= d1; i++) {
+        out.push(rootTrees[i]!);
+      }
+      return out;
+    },
+    rootKicksBetween(d0, d1) {
+      const out: Bump[] = [];
+      for (let i = lastAtOrBefore(rootKicks, d0, (b) => b.d) + 1; i < rootKicks.length && rootKicks[i]!.d <= d1; i++) {
+        out.push(rootKicks[i]!);
       }
       return out;
     },

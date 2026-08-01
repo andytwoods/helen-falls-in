@@ -609,6 +609,28 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       }
     }
 
+    // root trees: a big fellow hard against the path, roots crossing the surface
+    for (const rt of path.rootTreesNear(lo - 20, hi + 20)) {
+      const hwT = path.halfWidthAt(rt.d);
+      // gnarled roots first, wavering across the path from the trunk side
+      for (const [off, reach] of [
+        [-10, 0.55],
+        [-1, 0.9],
+        [9, 0.45],
+      ] as const) {
+        const rootD = rt.d + off;
+        for (let lat = -hwT - 4; lat < hwT * reach; lat += 3) {
+          const wob = (hash01(Math.round(rootD * 7 + lat * 3)) - 0.5) * 2.5;
+          const R = fw(path, rootD + wob, lat);
+          g.rect(R.x, R.y, 2, 2).fill(0x6e4f2f);
+          if (hash01(Math.round(rootD * 11 + lat * 5)) > 0.6) g.rect(R.x, R.y - 1, 2, 1).fill(0x8a6a42);
+        }
+      }
+      // then the tree itself, canopy overhanging the path edge
+      const T = fw(path, rt.d, -(hwT + 6));
+      paintCanopy(g, T.x, T.y, 22 + rt.seed * 6, Math.round(rt.d));
+    }
+
     // pubs
     for (const pub of PUBS) {
       if (pub.d >= lo - 40 && pub.d <= hi + 40) paintPub(g, path, pub.d);

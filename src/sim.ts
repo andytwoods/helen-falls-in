@@ -96,6 +96,7 @@ export interface PathSampler {
   crocSnapsBetween(d0: number, d1: number): number[];
   peopleMeetsBetween(d0: number, d1: number): Array<{ meetD: number; side: number }>;
   pooImpactsBetween(d0: number, d1: number): Array<{ d: number; lat: number; dir: number }>;
+  rootKicksBetween(d0: number, d1: number): Array<{ d: number; kick: number }>;
 }
 
 // waterside fraction of the path a lunging croc's jaws sweep (see path.ts)
@@ -173,7 +174,8 @@ export function step(s: SimState, p: Params, gaussian: () => number, path: PathS
   s.vx += a * dt;
 
   // Bumps: crossing a rumble strip jolts the slide and knocks the lean.
-  for (const bump of path.bumpsBetween(dPrev, s.d)) {
+  // Tree roots across the path are the same physics in quick succession.
+  for (const bump of [...path.bumpsBetween(dPrev, s.d), ...path.rootKicksBetween(dPrev, s.d)]) {
     const kick = bump.kick * p.bumpKick;
     s.vx += kick * widthScale;
     s.steer = Math.max(-1, Math.min(1, s.steer + kick * 0.13));
