@@ -1014,7 +1014,7 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
     const to = PUBS[next]!.d;
     const frac = Math.max(0, Math.min(1, (d - from) / Math.max(1, to - from)));
     const mapX = viewW - 9;
-    const mapTop = 10;
+    const mapTop = 26; // sits below the HUD's top-right text
     const mapH = 42;
     dynamic.rect(mapX - 5, mapTop - 4, 11, mapH + 10).fill({ color: 0x1c2431, alpha: 0.4 });
     for (let i = 0; i <= mapH; i += 1) {
