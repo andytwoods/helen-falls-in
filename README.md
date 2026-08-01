@@ -8,9 +8,11 @@ bike, calling at the pubs along the way. Canal on one side, hedgerow on the
 other. The whole ride takes about ten minutes — falling in is allowed (climb
 out, carry on), and every pub you reach becomes a starting point for next time.
 
-One input: **hold space** (desktop) or **touch anywhere** (mobile). Every press
-steers against the bike's visible tilt… then rapidly past it. It's a small
-meditation — for you; perhaps less so for Helen.
+Controls: **touch and hold** — left side of the screen leans left, right side
+leans right (← / → on a keyboard; space still works the classic one-button way,
+auto-steering against the visible tilt). Hold longer, lean harder — the whole
+game is a fight against your own over-corrections. It's a small meditation —
+for you; perhaps less so for Helen.
 
 See `OVERVIEW.md` for the design and `docs/STEERING.md` for the steering model and
 its tuning history (every constant is validated by a headless bot harness).

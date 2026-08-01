@@ -76,6 +76,14 @@ export function press(s: SimState, p: Params): void {
   s.held = true;
 }
 
+// Directional press: the player chose the lean side explicitly, so no sampling
+// and no resample hysteresis — that machinery exists to police the auto mode.
+export function pressDir(s: SimState, dir: -1 | 1): void {
+  s.dir = dir;
+  s.hold = 0;
+  s.held = true;
+}
+
 export function release(s: SimState): void {
   s.held = false;
   s.lastReleaseT = s.t;

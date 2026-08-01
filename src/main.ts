@@ -1,10 +1,10 @@
 import { audio } from './audio';
-import { attachButton } from './input';
+import { attachControls } from './input';
 import { formatTime, journeyBest, PUBS, recordJourney, unlockedPub, unlockPub } from './journey';
 import { createPath, type PathCurve } from './path';
 import { DEFAULT_PARAMS } from './params';
 import { createRenderer } from './render';
-import { createState, press, release, step, DT, type SimState } from './sim';
+import { createState, press, pressDir, release, step, DT, type SimState } from './sim';
 import { gaussianFrom, mulberry32 } from './rng';
 import { Telemetry } from './telemetry';
 import { attachSoundToggle } from './ui';
@@ -164,11 +164,12 @@ async function boot(): Promise<void> {
   const mount = document.getElementById('game')!;
   const renderer = await createRenderer(mount);
 
-  attachButton(mount, {
-    onDown: () => {
+  attachControls(mount, {
+    onDown: (dir) => {
       audio.ensureStarted(); // WebAudio must wake inside a user gesture (iOS)
       if (phase === 'riding') {
-        press(state, params);
+        if (dir === 0) press(state, params);
+        else pressDir(state, dir);
         telemetry.logInput(state.t, 'down');
         return;
       }
