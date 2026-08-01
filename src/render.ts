@@ -81,13 +81,13 @@ const HELEN_MAP = [
   '....TT....',
   '....HH....',
   'BssHHHHssB',
-  '..rrrrrr..',
-  '.rYYYYYYr.',
+  '.rrYYYYrr.',
+  '.rYyyyyYr.',
   '.YyyyyyyY.',
   '.YyyYyyyY.',
   '.YyyyyyyY.',
-  '.rYYYYYYr.',
-  '..rrrrrr..',
+  '.rYyyyyYr.',
+  '.rrYYYYrr.',
   '..Rrrrrr..',
   '...bbbb...',
   '...BBBB...',
@@ -650,23 +650,75 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       }
     }
 
-    if (e >= 0.7) {
-      const bob = Math.round(Math.sin(e * 2.6) * 1);
-      const y = sy + bob;
-      // the sunhat, floating: brim at the waterline, crown above
-      dynamic.rect(sx - 5, y - 1, 10, 2).fill(0xf9e29a); // brim
-      dynamic.rect(sx - 3, y - 3, 6, 2).fill(0xf2d16b); // crown
-      dynamic.rect(sx - 2, y - 4, 4, 1).fill(0xf2d16b);
-      // just her eyes above the water, under the brim
-      dynamic.rect(sx - 3, y + 1, 6, 1).fill(0xe8b48c);
-      dynamic.rect(sx - 2, y + 1, 1, 1).fill(0x2e2e38);
-      dynamic.rect(sx + 1, y + 1, 1, 1).fill(0x2e2e38);
-      // the frog, already in residence on the crown
-      dynamic.rect(sx - 2, y - 6, 4, 2).fill(0x5da936);
-      dynamic.rect(sx + 1, y - 5, 1, 1).fill(0x4c8c2b); // haunch
-      const blink = (e * 2) % 3.1 < 0.22;
-      dynamic.rect(sx - 2, y - 7, 1, 1).fill(blink ? 0x4c8c2b : 0xf5f2e8);
-      dynamic.rect(sx + 1, y - 7, 1, 1).fill(blink ? 0x4c8c2b : 0xf5f2e8);
+  }
+
+  // Full-screen cutscene: close-up of the aftermath. All water; the floating
+  // sunhat; just Helen's eyes above the line; the frog in residence, blinking.
+  function drawCutscene(e: number): void {
+    const cx = centreX;
+    const wy = Math.round(viewH * 0.52);
+
+    dynamic.rect(0, 0, viewW, viewH).fill(PAL.waterBase);
+    // broken water texture, denser below the waterline
+    for (let y = 0; y < viewH; y += 4) {
+      const h = hash01(y * 31 + Math.floor(e * 2));
+      if (h < (y > wy ? 0.5 : 0.3)) {
+        dynamic.rect(h * viewW * 1.4 - 10, y, 6 + h * 18, 1).fill(y > wy + 14 ? PAL.waterBank : PAL.waterRipple);
+      }
+    }
+
+    // rings spreading from Helen at the waterline
+    for (let ring = 0; ring < 3; ring++) {
+      const rr = 34 + ((e * 22 + ring * 16) % 48);
+      for (let k = 0; k < 22; k++) {
+        const a = (k / 22) * Math.PI * 2;
+        dynamic.rect(cx + Math.cos(a) * rr, wy + Math.sin(a) * rr * 0.35, 2, 1).fill(PAL.waterRipple);
+      }
+    }
+
+    const bob = Math.round(Math.sin(e * 2.6));
+    const hy = wy + bob;
+
+    // just her eyes above the water
+    dynamic.rect(cx - 20, hy - 6, 40, 6).fill(0xe8b48c);
+    dynamic.rect(cx - 13, hy - 5, 6, 4).fill(0x2e2e38);
+    dynamic.rect(cx + 7, hy - 5, 6, 4).fill(0x2e2e38);
+    dynamic.rect(cx - 12, hy - 5, 2, 2).fill(0xf5f2e8); // glints: looking up at the frog
+    dynamic.rect(cx + 8, hy - 5, 2, 2).fill(0xf5f2e8);
+    // waterline lapping at her
+    dynamic.rect(cx - 24, hy, 48, 2).fill(PAL.waterGlint);
+
+    // the sunhat: wide brim with shaded underside, red band, domed crown
+    dynamic.rect(cx - 42, hy - 9, 84, 2).fill(0xd9b959);
+    dynamic.rect(cx - 42, hy - 12, 84, 3).fill(0xf9e29a);
+    dynamic.rect(cx - 26, hy - 15, 52, 3).fill(0xc0392b); // band, matching her top
+    dynamic.rect(cx - 26, hy - 27, 52, 12).fill(0xf2d16b);
+    dynamic.rect(cx - 20, hy - 31, 40, 4).fill(0xf2d16b);
+    dynamic.rect(cx - 20, hy - 30, 10, 2).fill(0xf9e29a); // crown highlight
+
+    // the frog, enormous and unbothered, on the crown
+    const fy = hy - 31;
+    dynamic.rect(cx - 11, fy - 8, 22, 8).fill(0x5da936);
+    dynamic.rect(cx - 11, fy - 1, 22, 1).fill(0x74b85c); // belly
+    dynamic.rect(cx - 14, fy - 3, 3, 3).fill(0x4c8c2b); // folded legs
+    dynamic.rect(cx + 11, fy - 3, 3, 3).fill(0x4c8c2b);
+    dynamic.rect(cx - 5, fy - 2, 10, 1).fill(0x4c8c2b); // mouth
+    for (const ex of [-9, 3]) {
+      dynamic.rect(cx + ex, fy - 13, 6, 6).fill(0x5da936); // eye bumps
+      const blink = (e * 2) % 3.1 < 0.25;
+      if (blink) {
+        dynamic.rect(cx + ex + 1, fy - 10, 4, 1).fill(0x4c8c2b);
+      } else {
+        dynamic.rect(cx + ex + 1, fy - 12, 4, 4).fill(0xf5f2e8);
+        dynamic.rect(cx + ex + 2, fy - 11, 2, 2).fill(0x2e2e38);
+      }
+    }
+
+    // a few bubbles still coming up
+    for (let k = 0; k < 3; k++) {
+      const by = wy + 22 - ((e * 14 + k * 9) % 30);
+      const bx = cx - 34 + k * 30 + Math.sin(e * 3 + k * 2) * 3;
+      dynamic.rect(bx, by, 2, 2).fill(PAL.waterGlint);
     }
   }
 
@@ -704,10 +756,13 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
 
     drawDynamic(d, curr.t, path);
 
-    // canal death: Helen vanishes under the water and the splash scene plays
+    // canal death: in-world splash, then a brief full-screen frog cutscene
     const splashing = !curr.alive && curr.cause === 'canal';
     helen.visible = !splashing;
-    if (splashing) drawSplashScene(deathElapsed, curr, path);
+    if (splashing) {
+      if (deathElapsed < 0.55) drawSplashScene(deathElapsed, curr, path);
+      else if (deathElapsed < 2.05) drawCutscene(deathElapsed);
+    }
 
     // Helen: interpolate sim states for smooth render at any refresh rate.
     // World offset is x·halfW — normalised x alone would jitter through pinches.
