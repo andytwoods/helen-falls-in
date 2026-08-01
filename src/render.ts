@@ -1,10 +1,14 @@
 // Renderer: Pixi 8, adaptive low-res canvas, nearest-neighbour, warm storybook
-// pixel art. PERF ARCHITECTURE: the whole scene except creatures is static in
-// WORLD space — only the camera moves — so static scenery is pre-rendered into
-// cached chunk Graphics (one per CHUNK_PX of distance) that translate past the
-// camera. Only a small dynamic layer (wildlife, water glints) and Helen redraw
-// per frame. Chunks overlap-draw a margin so objects spanning a boundary are
-// drawn identically by both neighbours — no seams whatever the z-order.
+// pixel art. The towpath is a TRUE 2D curve now — its heading swings past
+// sideways at the big bends — so the world is drawn as ribbons along the
+// centreline in world space, the camera follows Helen (north-up), and her
+// sprite rotates with the path heading plus her lean. The steering sim lives
+// entirely in the path frame and is untouched.
+//
+// PERF: static scenery is pre-rendered into cached chunk Graphics (one per
+// CHUNK_PX of distance, in absolute world coordinates) that simply sit in the
+// scrolled world layer. A small dynamic layer (wildlife, people, glints) and a
+// screen-space layer (leg tracker, cutscenes, speech bubbles) redraw per frame.
 
 import { Application, Container, Graphics } from 'pixi.js';
 import { PUBS } from './journey';
@@ -12,19 +16,14 @@ import type { Params } from './params';
 import type { PathCurve } from './path';
 import { DITCH_GAP_PX, visualLean, type SimState } from './sim';
 
-// Design-minimum view: the guaranteed-visible area every device shows. The
-// actual canvas extends to fill the whole screen at a crisp integer device-pixel
-// scale — extra height is extra lookahead, extra width is scenery. Caps bound
-// the lookahead advantage of very tall/wide screens. The PLAYFIELD (sim world,
-// centre-relative) is identical on every device; only the window onto it varies.
 export const BASE_W = 160;
 export const BASE_H = 288;
 const MAX_W = 224;
 const MAX_H = 380;
-const HELEN_FROM_BOTTOM = 58;
 
-const CHUNK_PX = 120; // world-distance covered per cached chunk
-const CHUNK_MARGIN = 40; // ≥ the tallest object's spill past its anchor
+const CHUNK_PX = 120;
+const CHUNK_MARGIN = 60;
+const SLICE_PX = 4; // ribbon quad length along the centreline
 
 // Warm storybook-canal palette — the world is pretty on purpose (OVERVIEW.md).
 const PAL = {
@@ -64,38 +63,38 @@ const PAL = {
   undergrowthLight: 0x548533,
 };
 
-// Tiny sprites authored as pixel maps — easy to hand-tweak, and drop-in
-// replaceable by real textures in a later art pass.
+// Helen, top-down, on a bike that reads as a bike: thin wheels, a visible
+// frame, wide handlebars — and a round sunhat (slightly smaller these days).
 const HELEN_PX: Record<string, number> = {
   T: 0x3a3a44, // tyre
-  H: 0x565664, // hub/frame metal
-  B: 0x8a4a2f, // handlebar grips / saddle leather
+  H: 0x565664, // frame metal
+  B: 0x8a4a2f, // grips / saddle leather
   s: 0xe8b48c, // skin
   r: 0xc0392b, // red top
   R: 0xa32e22, // red top, shaded
-  y: 0xf2d16b, // blond
-  Y: 0xf9e29a, // blond highlight
+  y: 0xf2d16b, // sunhat crown
+  Y: 0xf9e29a, // sunhat brim/highlight
   b: 0x35507d, // shorts
 };
 const HELEN_MAP = [
-  '....TT....',
-  '....TT....',
-  '....HH....',
-  'BssHHHHssB',
-  '...YYYY...',
-  '..YyyyyY..',
-  '.YyyyyyyY.',
-  '.YyyYyyyY.',
-  '.YyyyyyyY.',
-  '..YyyyyY..',
-  '...YYYY...',
-  '..Rrrrrr..',
-  '...bbbb...',
-  '...BBBB...',
-  '....HH....',
-  '....TT....',
-  '....TT....',
-  '....TT....',
+  '....T....',
+  '....T....',
+  '....T....',
+  'BBssHssBB',
+  '...rrr...',
+  '..YYYYY..',
+  '.YyyyyyY.',
+  '.YyyYyyY.',
+  '.YyyyyyY.',
+  '..YYYYY..',
+  '...rRr...',
+  '...bbb...',
+  '....H....',
+  '....H....',
+  '....T....',
+  '....T....',
+  '....T....',
+  '....T....',
 ];
 
 function paintSprite(g: Graphics, map: string[], px: Record<string, number>, ox: number, oy: number): void {
@@ -109,8 +108,7 @@ function paintSprite(g: Graphics, map: string[], px: Record<string, number>, ox:
   }
 }
 
-// the sunhat chars — drawn on their own layer so aftermath tinting (mud, canal
-// water, leaves) never touches the hat
+// the sunhat chars — their own layer, so aftermath tinting never touches the hat
 const HAT_CHARS = new Set(['y', 'Y']);
 const HELEN_BODY_PX = Object.fromEntries(Object.entries(HELEN_PX).filter(([k]) => !HAT_CHARS.has(k)));
 const HELEN_HAT_PX = Object.fromEntries(Object.entries(HELEN_PX).filter(([k]) => HAT_CHARS.has(k)));
@@ -157,9 +155,8 @@ function paintPixelText(g: Graphics, text: string, x: number, y: number, colour:
 // deterministic integer hash → [0,1)
 const hash01 = (n: number) => (Math.imul(n ^ 0x9e3779b9, 2654435761) >>> 0) / 4294967296;
 
-// A tree seen from directly above: a lumpy disc of foliage, lit from the
-// top-left, shaded at the lower-right rim, textured with leaf clumps, with a
-// dark whorl at the centre where the trunk disappears beneath the canopy.
+// A tree seen from directly above: a lumpy diffuse disc of foliage — rotation-
+// invariant, so it works at any path heading.
 function paintCanopy(g: Graphics, cx: number, cy: number, w: number, seedN: number): void {
   const r = w / 2;
   for (let i = 0; i < w; i++) {
@@ -170,17 +167,14 @@ function paintCanopy(g: Graphics, cx: number, cy: number, w: number, seedN: numb
   for (let i = 0; i < w; i++) {
     const dy = i - r + 0.5;
     let half = Math.sqrt(Math.max(0, r * r - dy * dy));
-    half += (hash01(seedN + i * 3) - 0.5) * 2.4; // strongly lumpy foliage edge
+    half += (hash01(seedN + i * 3) - 0.5) * 2.4;
     if (half < 0.5) continue;
-    // core row, then feathered tips that only sometimes appear — a diffuse
-    // silhouette instead of a hard disc
     g.rect(cx - half + 1, cy + dy, half * 2 - 2, 1).fill(PAL.canopy);
     if (hash01(seedN + i * 13) > 0.35) g.rect(cx - half, cy + dy, 1, 1).fill(PAL.canopy);
     if (hash01(seedN + i * 17) > 0.35) g.rect(cx + half - 1, cy + dy, 1, 1).fill(PAL.canopy);
     if (dy < -r * 0.2) g.rect(cx - half + 2, cy + dy, half * 0.8, 1).fill(PAL.canopyLight);
     if (dy > r * 0.3) g.rect(cx + half - Math.max(2, half * 0.7) - 1, cy + dy, Math.max(2, half * 0.7), 1).fill(PAL.canopyShade);
   }
-  // outer sprigs past the rim — the airy, wind-blown fringe
   for (let k = 0; k < w; k++) {
     const a = hash01(seedN * 13 + k) * Math.PI * 2;
     const rr = r * (0.85 + hash01(seedN * 17 + k) * 0.4);
@@ -188,7 +182,6 @@ function paintCanopy(g: Graphics, cx: number, cy: number, w: number, seedN: numb
       a > Math.PI * 0.9 && a < Math.PI * 1.6 ? PAL.canopyLight : PAL.canopy,
     );
   }
-  // interior leaf-clump texture, dense — lets the canopy read as foliage
   for (let k = 0; k < w * 2; k++) {
     const a = hash01(seedN * 7 + k) * Math.PI * 2;
     const rr = hash01(seedN * 11 + k) * r * 0.75;
@@ -199,15 +192,8 @@ function paintCanopy(g: Graphics, cx: number, cy: number, w: number, seedN: numb
   g.rect(cx - 1, cy - 1, 2, 2).fill(PAL.canopyShade); // trunk whorl
 }
 
-// Layout (decision 2026-08-01): canal on the RIGHT of the towpath, ridable verge
-// with trees/hedgerow on the LEFT. All scenery comes from the PathCurve — it is
-// collidable world, generated once in path.ts and shared with the sim.
-
 export interface Renderer {
   app: Application;
-  // deathElapsed: wall-clock seconds since death (0 while riding) — drives the
-  // death cutscenes. aftermath: lingering evidence of the last fall (mud/wet/
-  // leaves), strength 1→0 as it fades over ~30s.
   draw(
     prev: SimState,
     curr: SimState,
@@ -230,26 +216,26 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
   mount.appendChild(app.canvas);
   app.canvas.style.imageRendering = 'pixelated';
 
-  const worldLayer = new Container(); // cached chunks, translated by the camera
-  const dynamic = new Graphics(); // wildlife + glints, redrawn each frame
-  app.stage.addChild(worldLayer, dynamic);
+  const worldLayer = new Container(); // chunks + creatures + Helen, world coords
+  const dynamicW = new Graphics(); // per-frame world-space layer
+  const screenG = new Graphics(); // per-frame screen-space layer (UI, cutscenes)
+  app.stage.addChild(worldLayer, screenG);
 
   const helen = new Container();
   const shadow = new Graphics();
-  shadow.rect(-4, 5, 8, 3).fill({ color: 0x000000, alpha: 0.18 });
-  shadow.rect(-3, 4, 6, 5).fill({ color: 0x000000, alpha: 0.1 });
+  shadow.rect(-3, 5, 6, 3).fill({ color: 0x000000, alpha: 0.18 });
+  shadow.rect(-2, 4, 4, 5).fill({ color: 0x000000, alpha: 0.1 });
   const bike = new Graphics();
-  paintSprite(bike, HELEN_MAP, HELEN_BODY_PX, -5, -9); // top-down: front wheel up
+  paintSprite(bike, HELEN_MAP, HELEN_BODY_PX, -4.5, -9);
   const hat = new Graphics();
-  paintSprite(hat, HELEN_MAP, HELEN_HAT_PX, -5, -9); // the hat, forever pristine
+  paintSprite(hat, HELEN_MAP, HELEN_HAT_PX, -4.5, -9);
   helen.addChild(shadow, bike, hat);
-  helen.scale.set(2); // pixel-doubled: reads at arm's length; hitbox is unchanged
-  app.stage.addChild(helen);
+  helen.scale.set(2);
 
   let viewW = BASE_W;
   let viewH = BASE_H;
   let centreX = BASE_W / 2;
-  let helenY = BASE_H - HELEN_FROM_BOTTOM;
+  let camAnchorY = Math.round(BASE_H * 0.58);
 
   const chunks = new Map<number, Graphics>();
   let chunkPath: PathCurve | null = null;
@@ -264,8 +250,6 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
   };
 
   const fitCanvas = () => {
-    // Integer scale in DEVICE pixels (crisp on any DPR), sized so the design
-    // minimum always fits — then the canvas grows to cover the screen.
     const dpr = window.devicePixelRatio || 1;
     const wDev = window.innerWidth * dpr;
     const hDev = window.innerHeight * dpr;
@@ -273,13 +257,12 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
     viewW = Math.min(MAX_W, Math.floor(wDev / deviceScale));
     viewH = Math.min(MAX_H, Math.floor(hDev / deviceScale));
     centreX = Math.floor(viewW / 2);
-    helenY = viewH - HELEN_FROM_BOTTOM;
+    camAnchorY = Math.round(viewH * 0.58);
     const scale = deviceScale / dpr;
     app.renderer.resize(viewW, viewH);
     app.canvas.style.width = `${viewW * scale}px`;
     app.canvas.style.height = `${viewH * scale}px`;
-    helen.position.set(centreX, helenY);
-    clearChunks(); // geometry depends on view size
+    clearChunks();
   };
   fitCanvas();
   window.addEventListener('resize', fitCanvas);
@@ -287,53 +270,87 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
 
   const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 
-  // A canalside pub from above: tiled gable roof with chimney, beer garden with
-  // picnic benches, a parasol and barrels, gravel spur down to the towpath, and
-  // a sign by the gate. Pubs live in the static chunks like all world geometry.
-  function paintPub(g: Graphics, path: PathCurve, pubD: number): void {
-    const cy = -pubD;
-    const leftE = centreX + path.centreAt(pubD) - path.halfWidthAt(pubD);
-    // trampled beer-garden ground, then the gravel spur to the towpath
-    g.rect(4, cy - 32, 42, 64).fill(0xc4a878);
-    g.rect(36, cy - 4, Math.max(2, leftE - 36), 9).fill(PAL.pathSand);
-    g.rect(36, cy + 4, Math.max(2, leftE - 36), 1).fill(PAL.pathEdge);
-    // the building: gabled tile roof, ridge, eaves, chimney
-    g.rect(0, cy - 29, 38, 40).fill(0x5a3a2e); // eaves shadow
-    g.rect(1, cy - 28, 17, 38).fill(0x9a5a44); // sunny slope
-    g.rect(18, cy - 28, 19, 38).fill(0x7d4736); // shaded slope
-    g.rect(17, cy - 28, 2, 38).fill(0xb87a5a); // ridge
-    for (let ty = cy - 24; ty < cy + 8; ty += 6) {
-      g.rect(2, ty, 15, 1).fill(0x8a4e3a); // tile courses
-      g.rect(19, ty + 3, 17, 1).fill(0x6d3e30);
-    }
-    g.rect(26, cy - 24, 8, 8).fill(0x8a8a90); // chimney
-    g.rect(28, cy - 22, 4, 4).fill(0x3a3a44);
-    g.rect(38, cy - 2, 4, 9).fill(0x77542f); // doormat at the garden door
-    // beer garden: picnic benches, a parasol, barrels by the wall
-    for (const [bx2, by2] of [
-      [39, cy - 24],
-      [41, cy + 12],
-    ] as const) {
-      g.rect(bx2 - 2, by2 - 3, 10, 2).fill(0x77542f); // bench
-      g.rect(bx2 - 2, by2 + 6, 10, 2).fill(0x77542f);
-      g.rect(bx2 - 1, by2, 8, 5).fill(0x8a6a42); // table
-    }
-    g.rect(36, cy - 28, 13, 11).fill(0xf0e0c0); // parasol over the first bench
-    g.rect(40, cy - 28, 3, 11).fill(0xd94f3d); // stripe
-    g.rect(42, cy - 23, 2, 2).fill(0x5a3a2e); // pole
-    g.rect(38, cy + 24, 5, 5).fill(0x6a4a2f); // barrels
-    g.rect(44, cy + 22, 5, 5).fill(0x6a4a2f);
-    g.rect(38, cy + 26, 5, 1).fill(0x8a6a42); // hoops
-    g.rect(44, cy + 24, 5, 1).fill(0x8a6a42);
-    // the sign by the gate
-    g.rect(leftE - 7, cy - 12, 3, 8).fill(0x5a4a3a); // post
-    g.rect(leftE - 11, cy - 19, 10, 7).fill(0xf0e0c0); // board
-    g.rect(leftE - 9, cy - 17, 4, 3).fill(0xd94f3d); // the painted something
-    g.rect(leftE - 11, cy - 13, 10, 1).fill(0x8a6a42); // board frame
+  // ---- path-frame helpers ----
+  function fw(path: PathCurve, D: number, lat: number): { x: number; y: number } {
+    const pos = path.posAt(D);
+    const th = path.headingAt(D);
+    return { x: pos.x + Math.cos(th) * lat, y: pos.y + Math.sin(th) * lat };
   }
 
-  // ---- static world chunk: everything that is a pure function of distance ----
-  // Content is drawn at world y = −D (screen y = worldLayer.y − D).
+  // a frame on the centreline: position + cos/sin of heading, computed once and
+  // shared by every band quad in a slice (the expensive part of chunk building)
+  interface Frame {
+    x: number;
+    y: number;
+    c: number;
+    s: number;
+  }
+  function frameAt(path: PathCurve, D: number): Frame {
+    const pos = path.posAt(D);
+    const th = path.headingAt(D);
+    return { x: pos.x, y: pos.y, c: Math.cos(th), s: Math.sin(th) };
+  }
+  function quadF(g: Graphics, f0: Frame, f1: Frame, la: number, lb: number, col: number): void {
+    g.poly([
+      f0.x + f0.c * la, f0.y + f0.s * la,
+      f0.x + f0.c * lb, f0.y + f0.s * lb,
+      f1.x + f1.c * lb, f1.y + f1.s * lb,
+      f1.x + f1.c * la, f1.y + f1.s * la,
+    ]).fill(col);
+  }
+  function quad(g: Graphics, path: PathCurve, Da: number, Db: number, la: number, lb: number, col: number): void {
+    quadF(g, frameAt(path, Da - 0.8), frameAt(path, Db + 0.8), la, lb, col);
+  }
+
+  const rag = (D: number) =>
+    Math.sin(D * 0.013) * 4 + Math.sin(D * 0.041) * 2 + (hash01(Math.floor(D / 2) * 3) - 0.5) * 2;
+
+  // A canalside pub: building axis-aligned at its anchor, garden furniture and
+  // spur laid out along the path frame.
+  function paintPub(g: Graphics, path: PathCurve, pubD: number): void {
+    // gravel spur from the towpath into the garden
+    quad(g, path, pubD - 5, pubD + 4, -path.halfWidthAt(pubD), -42, PAL.pathSand);
+    // trampled garden ground
+    quad(g, path, pubD - 32, pubD + 32, -84, -40, 0xc4a878);
+    const B = fw(path, pubD, -64); // building centre
+    const bx = Math.round(B.x - 19);
+    const by = Math.round(B.y - 20);
+    g.rect(bx, by, 38, 40).fill(0x5a3a2e); // eaves
+    g.rect(bx + 1, by + 1, 17, 38).fill(0x9a5a44); // sunny slope
+    g.rect(bx + 18, by + 1, 19, 38).fill(0x7d4736); // shaded slope
+    g.rect(bx + 17, by + 1, 2, 38).fill(0xb87a5a); // ridge
+    for (let ty = by + 5; ty < by + 37; ty += 6) {
+      g.rect(bx + 2, ty, 15, 1).fill(0x8a4e3a); // tile courses
+      g.rect(bx + 19, ty + 3, 17, 1).fill(0x6d3e30);
+    }
+    g.rect(bx + 26, by + 5, 8, 8).fill(0x8a8a90); // chimney
+    g.rect(bx + 28, by + 7, 4, 4).fill(0x3a3a44);
+    // beer garden: benches, parasol, barrels
+    for (const [dOff, latOff] of [
+      [-20, -33],
+      [16, -31],
+    ] as const) {
+      const T = fw(path, pubD + dOff, latOff);
+      g.rect(T.x - 5, T.y - 5, 10, 2).fill(0x77542f); // bench
+      g.rect(T.x - 5, T.y + 4, 10, 2).fill(0x77542f);
+      g.rect(T.x - 4, T.y - 2, 8, 5).fill(0x8a6a42); // table
+    }
+    const Pl = fw(path, pubD - 24, -34);
+    g.rect(Pl.x - 6, Pl.y - 6, 13, 11).fill(0xf0e0c0); // parasol
+    g.rect(Pl.x - 2, Pl.y - 6, 3, 11).fill(0xd94f3d); // stripe
+    g.rect(Pl.x, Pl.y, 2, 2).fill(0x5a3a2e); // pole
+    const Ba = fw(path, pubD + 27, -38);
+    g.rect(Ba.x - 3, Ba.y - 2, 5, 5).fill(0x6a4a2f); // barrels
+    g.rect(Ba.x + 3, Ba.y, 5, 5).fill(0x6a4a2f);
+    g.rect(Ba.x - 3, Ba.y, 5, 1).fill(0x8a6a42);
+    // sign by the gate
+    const S = fw(path, pubD - 12, -36);
+    g.rect(S.x, S.y, 3, 8).fill(0x5a4a3a);
+    g.rect(S.x - 3, S.y - 7, 10, 7).fill(0xf0e0c0);
+    g.rect(S.x - 1, S.y - 5, 4, 3).fill(0xd94f3d);
+  }
+
+  // ---- static world chunk ----
   function buildChunk(idx: number, p: Params, path: PathCurve): Graphics {
     const g = new Graphics();
     const D0 = idx * CHUNK_PX;
@@ -341,113 +358,99 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
     const lo = D0 - CHUNK_MARGIN;
     const hi = D1 + CHUNK_MARGIN;
 
-    // background band (chunk-exclusive; margin content below covers neighbours'
-    // identical spill)
-    g.rect(0, -D1, viewW, CHUNK_PX).fill(PAL.verge);
+    let fPrev = frameAt(path, D0 - 8 - 0.8);
+    for (let D = D0 - 8; D < D1 + 8; D += SLICE_PX) {
+      const f0 = fPrev;
+      const f1 = frameAt(path, D + SLICE_PX + 0.8);
+      fPrev = frameAt(path, D + SLICE_PX - 0.8);
+      const rowSlot = Math.floor(D / 2);
+      const halfW = path.halfWidthAt(D);
+      const fringeW = (1 - p.grassStart) * halfW;
+      // woodland band with ragged treeline (the fatal far-hedge boundary)
+      quadF(g, f0, f1, -250, -64 + rag(D), PAL.undergrowth);
+      const h1 = hash01(rowSlot * 7 + 100);
+      if (h1 < 0.45) {
+        const P = fw(path, D + 1, -66 - h1 * 170);
+        g.rect(P.x, P.y, 2 + h1 * 4, 1).fill(PAL.undergrowthDark);
+      }
+      const h2 = hash01(rowSlot * 13 + 200);
+      if (h2 > 0.55) {
+        const P = fw(path, D + 2, -70 - (h2 - 0.55) * 340);
+        g.rect(P.x, P.y, 1 + h2 * 3, 1).fill(PAL.undergrowthLight);
+      }
+      // verge dither between wood and path
+      const vh = hash01(rowSlot);
+      if (vh < 0.45) {
+        const P = fw(path, D + 1, -44 - vh * 40);
+        g.rect(P.x, P.y, 2, 1).fill(PAL.vergeDark);
+      }
+      // ditch
+      const ditchW = path.ditchWidthAt(D);
+      if (ditchW > 0) {
+        quadF(g, f0, f1,-halfW - DITCH_GAP_PX - ditchW, -halfW - DITCH_GAP_PX, PAL.ditchMud);
+        if (ditchW > 3) {
+          quadF(g, f0, f1,-halfW - DITCH_GAP_PX - ditchW + 1, -halfW - DITCH_GAP_PX - 1, PAL.ditchWater);
+        }
+      }
+      // canal
+      quadF(g, f0, f1,halfW, 250, PAL.waterBase);
+      quadF(g, f0, f1,halfW, halfW + 1.5, PAL.waterBank);
+      // towpath + fringes
+      quadF(g, f0, f1,-halfW, halfW, PAL.pathSand);
+      quadF(g, f0, f1,-halfW, -halfW + fringeW, PAL.fringe);
+      quadF(g, f0, f1,halfW - fringeW, halfW, PAL.fringe);
+      const ph = hash01(rowSlot * 5 + 1);
+      if (ph < 0.5) {
+        const P = fw(path, D + 1, -halfW + fringeW + 2 + ph * 2 * (halfW - fringeW - 4));
+        g.rect(P.x, P.y, 1, 1).fill(ph < 0.25 ? PAL.pathDark : PAL.pathLight);
+      }
+      const fh = hash01(rowSlot * 11 + 3);
+      if (fh < 0.3) {
+        const P = fw(path, D + 2, -halfW + fh * fringeW * 3);
+        g.rect(P.x, P.y, 1, 1).fill(PAL.fringeDark);
+      }
+      if (fh > 0.93) {
+        const P = fw(path, D + 1, halfW - 1 - (fh - 0.93) * 30);
+        g.rect(P.x, P.y, 1, 1).fill(fh > 0.965 ? PAL.flowerWhite : PAL.flowerYellow);
+      }
+      if (((D % 24) + 24) % 24 < 6) {
+        quadF(g, f0, f1,-halfW + fringeW, -halfW + fringeW + 2, PAL.pathEdge);
+        quadF(g, f0, f1,halfW - fringeW - 2, halfW - fringeW, PAL.pathEdge);
+      }
+      const groove = path.grooveAt(D);
+      if (groove) {
+        quadF(g, f0, f1,groove.x - 1.5, groove.x + 1.5, 0x9a835c);
+        quadF(g, f0, f1,groove.x - 0.5, groove.x + 0.5, 0x7d6a49);
+      }
+    }
 
-    // sunlit meadow patches
+    // downhill chevrons (V pointing along the path)
+    for (let D = Math.ceil(lo / 24) * 24; D <= hi; D += 24) {
+      if (path.speedFactorAt(D) <= 1.05) continue;
+      quad(g, path, D - 6, D - 4, -6, 6, PAL.pathEdge);
+      quad(g, path, D - 4, D - 2, -4, 4, PAL.pathEdge);
+      quad(g, path, D - 2, D, -2, 2, PAL.pathEdge);
+    }
+
+    // ripples, world-anchored
+    for (let D = Math.ceil(lo / 24) * 24; D <= hi; D += 24) {
+      const R1 = fw(path, D + 6, path.halfWidthAt(D) + 18);
+      const R2 = fw(path, D + 16, path.halfWidthAt(D) + 34);
+      g.rect(R1.x, R1.y, 8, 1).fill(PAL.waterRipple);
+      g.rect(R2.x, R2.y, 6, 1).fill(PAL.waterRipple);
+    }
+
+    // meadow patches
     for (let n = Math.floor(lo / 240) - 1; n <= Math.floor(hi / 240) + 1; n++) {
       const mr = hash01(n * 83 + 21);
       if (mr < 0.4) continue;
       const mD = n * 240 + mr * 110;
       if (mD < lo || mD > hi) continue;
+      const M = fw(path, mD, -58 + hash01(n * 97) * 16);
       const mw = 16 + mr * 18;
       const mh = 12 + hash01(n * 89) * 14;
-      const mx = 2 + hash01(n * 97) * 22;
-      g.rect(mx + 2, -mD, mw - 4, mh).fill(PAL.meadow);
-      g.rect(mx, -mD + 2, mw, mh - 4).fill(PAL.meadow);
-    }
-
-    const woodEdge = centreX - 68;
-    const period = 24;
-
-    // per-row content
-    for (let D = D0 - 8; D < D1 + 8; D += 2) {
-      const y = -D;
-      const rowSlot = Math.floor(D / 2);
-      const halfW = path.halfWidthAt(D);
-      const fringeW = (1 - p.grassStart) * halfW;
-      const left = centreX + path.centreAt(D) - halfW;
-      const right = left + halfW * 2;
-      // verge texture: sparse darker-grass dither
-      const vh = hash01(rowSlot);
-      if (vh < 0.45) g.rect(2 + vh * 80, y, 2, 1).fill(PAL.vergeDark);
-      if (vh > 0.8) g.rect(38 * hash01(rowSlot + 7), y + 1, 1, 1).fill(PAL.vergeDark);
-      // ditch: muddy channel hugging the path's left edge in stretches
-      const ditchW = path.ditchWidthAt(D);
-      if (ditchW > 0) {
-        const dx = left - DITCH_GAP_PX - ditchW;
-        g.rect(dx, y, ditchW, 2).fill(PAL.ditchMud);
-        if (ditchW > 3) g.rect(dx + 1, y, ditchW - 2, 2).fill(PAL.ditchWater);
-      }
-      // canal
-      g.rect(right, y, viewW - right, 2).fill(PAL.waterBase);
-      g.rect(right, y, 1, 2).fill(PAL.waterBank);
-      // towpath with speckles and fringes
-      g.rect(left, y, halfW * 2, 2).fill(PAL.pathSand);
-      const ph = hash01(rowSlot * 5 + 1);
-      if (ph < 0.5) {
-        g.rect(left + fringeW + 2 + ph * 2 * (halfW - fringeW - 4), y, 1, 1).fill(
-          ph < 0.25 ? PAL.pathDark : PAL.pathLight,
-        );
-      }
-      g.rect(left, y, fringeW, 2).fill(PAL.fringe);
-      g.rect(right - fringeW, y, fringeW, 2).fill(PAL.fringe);
-      const fh = hash01(rowSlot * 11 + 3);
-      if (fh < 0.3) g.rect(left + fh * fringeW * 3, y, 1, 1).fill(PAL.fringeDark);
-      if (fh > 0.93) {
-        g.rect(right - 1 - (fh - 0.93) * 30, y, 1, 1).fill(fh > 0.965 ? PAL.flowerWhite : PAL.flowerYellow);
-      }
-      if (((D % period) + period) % period < 6) {
-        g.rect(left + fringeW, y, 2, 2).fill(PAL.pathEdge);
-        g.rect(right - fringeW - 2, y, 2, 2).fill(PAL.pathEdge);
-      }
-      // groove rut
-      const groove = path.grooveAt(D);
-      if (groove) {
-        const gx = centreX + path.centreAt(D) + groove.x;
-        g.rect(gx - 1.5, y, 3, 2).fill(0x9a835c);
-        g.rect(gx - 0.5, y, 1, 2).fill(0x7d6a49);
-      }
-      // downhill chevrons
-      if (((D % 24) + 24) % 24 < 2 && path.speedFactorAt(D) > 1.05) {
-        const c = centreX + path.centreAt(D);
-        g.rect(c - 6, y - 4, 12, 2).fill(PAL.pathEdge);
-        g.rect(c - 4, y - 2, 8, 2).fill(PAL.pathEdge);
-        g.rect(c - 2, y, 4, 2).fill(PAL.pathEdge);
-      }
-      // woodland undergrowth: ragged noise-wobbled treeline + speckle
-      if (woodEdge > 2) {
-        const rag = Math.sin(D * 0.013) * 4 + Math.sin(D * 0.041) * 2 + (hash01(rowSlot * 3) - 0.5) * 2;
-        g.rect(0, y, woodEdge + rag, 2).fill(PAL.undergrowth);
-        const h1 = hash01(rowSlot * 7 + 100);
-        if (h1 < 0.45) g.rect(h1 * 2.2 * woodEdge, y, 2 + h1 * 4, 1).fill(PAL.undergrowthDark);
-        const h2 = hash01(rowSlot * 13 + 200);
-        if (h2 > 0.55) g.rect((h2 * 2 - 1) * woodEdge, y + 1, 1 + h2 * 3, 1).fill(PAL.undergrowthLight);
-        const h3 = hash01(rowSlot * 17 + 300);
-        if (h3 > 0.9) g.rect(h3 * woodEdge * 0.9, y, 1, 1).fill(PAL.canopyLight); // fern glint
-      }
-    }
-
-    if (woodEdge > 2) {
-      // forest-floor shade blobs, then the solid canopy mass of the treeline
-      for (let n = Math.floor(lo / 34) - 1; n <= Math.floor(hi / 34) + 1; n++) {
-        const ur = hash01(n * 107 + 41);
-        const uD = n * 34 + ur * 16;
-        if (uD < lo || uD > hi) continue;
-        const uw = 6 + ur * 12;
-        const ux = hash01(n * 109) * woodEdge - uw / 2;
-        g.rect(ux + 1, -uD, uw - 2, 8).fill(ur < 0.5 ? PAL.undergrowthDark : PAL.undergrowthLight);
-        g.rect(ux, -uD + 2, uw, 4).fill(ur < 0.5 ? PAL.undergrowthDark : PAL.undergrowthLight);
-      }
-      for (let n = Math.floor(lo / 14) - 2; n <= Math.floor(hi / 14) + 2; n++) {
-        const wr = hash01(n * 101 + 31);
-        const wD = n * 14 + wr * 7;
-        if (wD < lo || wD > hi) continue;
-        const ww = 12 + wr * 8;
-        const wx = hash01(n * 103) * (woodEdge + 6) - 4;
-        paintCanopy(g, wx, -wD, ww, n * 7 + 3);
-      }
+      g.rect(M.x - mw / 2 + 2, M.y - mh / 2, mw - 4, mh).fill(PAL.meadow);
+      g.rect(M.x - mw / 2, M.y - mh / 2 + 2, mw, mh - 4).fill(PAL.meadow);
     }
 
     // grass tufts
@@ -456,105 +459,115 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       if (gr < 0.5) continue;
       const gD = n * 22 + gr * 12;
       if (gD < lo || gD > hi) continue;
-      const gx = 3 + hash01(n * 23 + 2) * 34;
-      g.rect(gx, -gD, 1, 2).fill(PAL.vergeDark);
-      g.rect(gx - 1, -gD + 1, 1, 1).fill(PAL.vergeDark);
-      g.rect(gx + 1, -gD + 1, 1, 1).fill(PAL.vergeDark);
+      const P = fw(path, gD, -43 - hash01(n * 23 + 2) * 34);
+      g.rect(P.x, P.y, 1, 2).fill(PAL.vergeDark);
+      g.rect(P.x - 1, P.y + 1, 1, 1).fill(PAL.vergeDark);
+      g.rect(P.x + 1, P.y + 1, 1, 1).fill(PAL.vergeDark);
     }
 
-    // wildflowers — cow parsley, poppies, foxgloves, daisies, bluebells, toadstools
+    // wildflowers
     for (let n = Math.floor(lo / 10) - 1; n <= Math.floor(hi / 10) + 1; n++) {
       const fr = hash01(n * 13 + 5);
       if (fr < 0.4) continue;
       const fD = n * 10 + fr * 6;
       if (fD < lo || fD > hi) continue;
-      const y = -fD;
-      const fx = 3 + hash01(n * 17 + 1) * 34;
+      const P = fw(path, fD, -43 - hash01(n * 17 + 1) * 34);
+      const x = P.x;
+      const y = P.y;
       if (fr < 0.55) {
-        g.rect(fx, y, 1, 1).fill(PAL.flowerWhite); // cow parsley cluster
-        g.rect(fx + 2, y - 1, 1, 1).fill(PAL.flowerWhite);
-        g.rect(fx + 1, y + 1, 1, 1).fill(PAL.flowerWhite);
-        g.rect(fx + 1, y + 2, 1, 1).fill(PAL.fringeDark); // stem
+        g.rect(x, y, 1, 1).fill(PAL.flowerWhite);
+        g.rect(x + 2, y - 1, 1, 1).fill(PAL.flowerWhite);
+        g.rect(x + 1, y + 1, 1, 1).fill(PAL.flowerWhite);
+        g.rect(x + 1, y + 2, 1, 1).fill(PAL.fringeDark);
       } else if (fr < 0.68) {
-        g.rect(fx, y, 2, 2).fill(PAL.flowerRed); // poppy
-        g.rect(fx, y, 1, 1).fill(PAL.flowerYellow);
-        if (fr > 0.6) g.rect(fx + 3, y + 2, 2, 2).fill(PAL.flowerRed); // a second head
+        g.rect(x, y, 2, 2).fill(PAL.flowerRed);
+        g.rect(x, y, 1, 1).fill(PAL.flowerYellow);
+        if (fr > 0.6) g.rect(x + 3, y + 2, 2, 2).fill(PAL.flowerRed);
       } else if (fr < 0.78) {
-        g.rect(fx, y - 3, 2, 4).fill(PAL.flowerPink); // foxglove spike
-        g.rect(fx, y - 3, 1, 1).fill(0xe8a8d8); // pale tip
-        g.rect(fx, y + 1, 1, 1).fill(PAL.canopyLight); // leaf
+        g.rect(x, y - 3, 2, 4).fill(PAL.flowerPink);
+        g.rect(x, y - 3, 1, 1).fill(0xe8a8d8);
+        g.rect(x, y + 1, 1, 1).fill(PAL.canopyLight);
       } else if (fr < 0.88) {
-        g.rect(fx - 1, y, 3, 1).fill(PAL.flowerWhite); // daisy
-        g.rect(fx, y - 1, 1, 3).fill(PAL.flowerWhite);
-        g.rect(fx, y, 1, 1).fill(PAL.flowerYellow);
+        g.rect(x - 1, y, 3, 1).fill(PAL.flowerWhite);
+        g.rect(x, y - 1, 1, 3).fill(PAL.flowerWhite);
+        g.rect(x, y, 1, 1).fill(PAL.flowerYellow);
       } else if (fr < 0.95) {
-        g.rect(fx, y, 1, 1).fill(PAL.flowerViolet); // bluebell drift
-        g.rect(fx + 2, y + 1, 1, 1).fill(PAL.flowerViolet);
-        g.rect(fx + 1, y - 1, 1, 1).fill(PAL.flowerViolet);
+        g.rect(x, y, 1, 1).fill(PAL.flowerViolet);
+        g.rect(x + 2, y + 1, 1, 1).fill(PAL.flowerViolet);
+        g.rect(x + 1, y - 1, 1, 1).fill(PAL.flowerViolet);
       } else {
-        g.rect(fx, y, 2, 1).fill(PAL.flowerRed); // toadstool cap
-        g.rect(fx, y - 1, 2, 1).fill(PAL.flowerRed);
-        g.rect(fx + 1, y - 1, 1, 1).fill(PAL.flowerWhite); // speck
-        g.rect(fx, y + 1, 1, 1).fill(PAL.flowerWhite); // stalk
+        g.rect(x, y, 2, 1).fill(PAL.flowerRed);
+        g.rect(x, y - 1, 2, 1).fill(PAL.flowerRed);
+        g.rect(x + 1, y - 1, 1, 1).fill(PAL.flowerWhite);
+        g.rect(x, y + 1, 1, 1).fill(PAL.flowerWhite);
       }
     }
 
-    // lily pads along the near bank
+    // forest-floor blobs + the solid treeline canopies
+    for (let n = Math.floor(lo / 34) - 1; n <= Math.floor(hi / 34) + 1; n++) {
+      const ur = hash01(n * 107 + 41);
+      const uD = n * 34 + ur * 16;
+      if (uD < lo || uD > hi) continue;
+      const P = fw(path, uD, -70 - hash01(n * 109) * 160);
+      const uw = 6 + ur * 12;
+      g.rect(P.x - uw / 2 + 1, P.y - 4, uw - 2, 8).fill(ur < 0.5 ? PAL.undergrowthDark : PAL.undergrowthLight);
+      g.rect(P.x - uw / 2, P.y - 2, uw, 4).fill(ur < 0.5 ? PAL.undergrowthDark : PAL.undergrowthLight);
+    }
+    for (let n = Math.floor(lo / 14) - 2; n <= Math.floor(hi / 14) + 2; n++) {
+      const wr = hash01(n * 101 + 31);
+      const wD = n * 14 + wr * 7;
+      if (wD < lo || wD > hi) continue;
+      const P = fw(path, wD, -70 - hash01(n * 103) * 150);
+      paintCanopy(g, P.x, P.y, 12 + wr * 8, n * 7 + 3);
+    }
+
+    // lily pads
     for (let n = Math.floor(lo / 52) - 1; n <= Math.floor(hi / 52) + 1; n++) {
       const lr = hash01(n * 29 + 11);
       if (lr < 0.55) continue;
       const lD = n * 52 + lr * 30;
       if (lD < lo || lD > hi) continue;
-      const bank = centreX + path.centreAt(lD) + path.halfWidthAt(lD);
-      const lx = bank + 4 + hash01(n * 31) * 9;
-      g.rect(lx, -lD, 4, 3).fill(PAL.lily);
-      g.rect(lx, -lD, 2, 1).fill(PAL.lilyLight);
-      g.rect(lx + 3, -lD + 2, 1, 1).fill(PAL.waterBase); // notch
-    }
-
-    // slow rolling ripples — world-anchored every 24px
-    for (let D = Math.ceil(lo / 24) * 24; D <= hi; D += 24) {
-      g.rect(viewW - 36, -D + 6, 8, 1).fill(PAL.waterRipple);
-      g.rect(viewW - 18, -D + 16, 6, 1).fill(PAL.waterRipple);
+      const P = fw(path, lD, path.halfWidthAt(lD) + 6 + hash01(n * 31) * 9);
+      g.rect(P.x, P.y, 4, 3).fill(PAL.lily);
+      g.rect(P.x, P.y, 2, 1).fill(PAL.lilyLight);
+      g.rect(P.x + 3, P.y + 2, 1, 1).fill(PAL.waterBase);
     }
 
     // bumps: rumble strips across the path
     for (const bump of path.bumpsBetween(lo, hi)) {
-      const c = centreX + path.centreAt(bump.d);
       const hw = path.halfWidthAt(bump.d) - 4;
-      g.rect(c - hw, -bump.d - 2, hw * 2, 2).fill(PAL.pathLight);
-      g.rect(c - hw, -bump.d + 1, hw * 2, 1).fill(PAL.pathDark);
+      quad(g, path, bump.d - 2, bump.d, -hw, hw, PAL.pathLight);
+      quad(g, path, bump.d + 1, bump.d + 2, -hw, hw, PAL.pathDark);
     }
 
     // rocks
     for (const rock of path.rocksNear(lo, hi)) {
-      const rx = centreX + path.centreAt(rock.d) + rock.xf * path.halfWidthAt(rock.d);
-      g.rect(rx - 3, -rock.d - 2, 6, 5).fill(PAL.rock);
-      g.rect(rx - 2, -rock.d - 3, 4, 2).fill(PAL.rockLight);
-      g.rect(rx - 3, -rock.d + 2, 6, 1).fill(PAL.rockShade);
+      const P = fw(path, rock.d, rock.xf * path.halfWidthAt(rock.d));
+      g.rect(P.x - 3, P.y - 2, 6, 5).fill(PAL.rock);
+      g.rect(P.x - 2, P.y - 3, 4, 2).fill(PAL.rockLight);
+      g.rect(P.x - 3, P.y + 2, 6, 1).fill(PAL.rockShade);
     }
 
-    // verge trees & bushes (collidable world objects; robins perch statically)
-    for (const obj of path.vergeObjects(lo - 10, hi + 10)) {
-      const y = -obj.d;
-      const bx = centreX + obj.cx - obj.w / 2;
+    // verge trees & bushes (collidable; cx is frame-lateral)
+    for (const obj of path.vergeObjects(lo - 12, hi + 12)) {
+      const P = fw(path, obj.d, obj.cx);
       const oh = hash01(Math.floor(obj.d));
       if (obj.kind === 'bush') {
-        g.rect(bx, y - 2, obj.w, 4).fill(PAL.bush);
-        g.rect(bx + 2, y - 4, obj.w - 4, 2).fill(PAL.bush);
-        g.rect(bx + 1, y - 3, 3, 2).fill(PAL.bushLight);
-        g.rect(bx + 1, y + 2, obj.w - 2, 1).fill(PAL.bushShade);
-        if (oh < 0.3) g.rect(bx + obj.w - 3, y - 1, 1, 1).fill(PAL.flowerRed); // berries
+        g.rect(P.x - obj.w / 2, P.y - 2, obj.w, 4).fill(PAL.bush);
+        g.rect(P.x - obj.w / 2 + 2, P.y - 4, obj.w - 4, 2).fill(PAL.bush);
+        g.rect(P.x - obj.w / 2 + 1, P.y - 3, 3, 2).fill(PAL.bushLight);
+        g.rect(P.x - obj.w / 2 + 1, P.y + 2, obj.w - 2, 1).fill(PAL.bushShade);
+        if (oh < 0.3) g.rect(P.x + obj.w / 2 - 3, P.y - 1, 1, 1).fill(PAL.flowerRed);
       } else {
-        paintCanopy(g, centreX + obj.cx, y, obj.w, Math.floor(obj.d));
+        paintCanopy(g, P.x, P.y, obj.w, Math.floor(obj.d));
         if (oh > 0.78) {
-          g.rect(centreX + obj.cx - 2, y - obj.w * 0.3, 2, 2).fill(0x4a4a52); // robin
-          g.rect(centreX + obj.cx - 2, y - obj.w * 0.3 + 1, 1, 1).fill(0xd9683d); // breast
+          g.rect(P.x - 2, P.y - obj.w * 0.3, 2, 2).fill(0x4a4a52); // robin
+          g.rect(P.x - 2, P.y - obj.w * 0.3 + 1, 1, 1).fill(0xd9683d);
         }
       }
     }
 
-    // pubs (drawn last: their clearing is kept free of collidable scenery)
+    // pubs
     for (const pub of PUBS) {
       if (pub.d >= lo - 40 && pub.d <= hi + 40) paintPub(g, path, pub.d);
     }
@@ -562,141 +575,326 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
     return g;
   }
 
-  // Heckles — one per person per journey when Helen buzzes them, no sound, just
-  // a bubble. Render-side state only: never touches the sim, replays stay exact.
+  // ---- heckles & dodges: render-side state only; replays stay exact ----
   const yells = new Map<string, { until: number; text: string }>();
+  const dodges = new Map<string, { at: number; dir: number }>();
   let lastYellD = 0;
+  let camWX = 0;
+  let camWY = 0;
+  let helenWX = 0;
+  let helenWY = 0;
 
-  function drawBubble(text: string, px: number, py: number): void {
+  function toScreen(x: number, y: number): { x: number; y: number } {
+    return { x: x + worldLayer.x, y: y + worldLayer.y };
+  }
+
+  function visible(x: number, y: number): boolean {
+    return Math.abs(x - camWX) < viewW * 0.8 + 30 && Math.abs(y - camWY) < viewH * 0.8 + 30;
+  }
+
+  function drawBubble(text: string, wx: number, wy: number): void {
+    const s = toScreen(wx, wy);
     const w = text.length * 4 + 3;
-    const bx = Math.max(2, Math.min(viewW - w - 2, Math.round(px) - Math.floor(w / 2)));
-    const by = Math.round(py) - 22;
-    dynamic.rect(bx - 1, by - 1, w + 2, 11).fill(0x2e2e38); // border
-    dynamic.rect(bx, by, w, 9).fill(0xf5f2e8); // bubble
-    dynamic.rect(Math.round(px) - 1, by + 10, 2, 2).fill(0xf5f2e8); // tail
-    paintPixelText(dynamic, text, bx + 2, by + 2, 0x2e2e38);
+    const bx = Math.max(2, Math.min(viewW - w - 2, Math.round(s.x) - Math.floor(w / 2)));
+    const by = Math.round(s.y) - 22;
+    screenG.rect(bx - 1, by - 1, w + 2, 11).fill(0x2e2e38);
+    screenG.rect(bx, by, w, 9).fill(0xf5f2e8);
+    screenG.rect(Math.round(s.x) - 1, by + 10, 2, 2).fill(0xf5f2e8);
+    paintPixelText(screenG, text, bx + 2, by + 2, 0x2e2e38);
   }
 
-  function maybeYell(key: string, px: number, py: number, helenX: number, t: number, seed: number, xThresh = 24): void {
+  // Near-miss: the person yells AND flings themselves clear — waterside folk
+  // into the canal, verge-side into the ditch. Returns their current lateral
+  // offset from where they were standing, plus how "landed" they are.
+  function startle(
+    key: string,
+    D: number,
+    lat: number,
+    t: number,
+    seed: number,
+    path: PathCurve,
+  ): { lat: number; landed: boolean; dir: number } {
+    const P = fw(path, D, lat);
+    const entry = dodges.get(key);
+    if (!entry) {
+      if (Math.abs(P.x - helenWX) < 26 && Math.abs(P.y - helenWY) < 24) {
+        const dir = lat >= 0 ? 1 : -1;
+        dodges.set(key, { at: t, dir });
+        const text = seed > 0.86 ? "LOOK WHERE YOU'RE GOING!" : seed > 0.68 ? 'BLOODY CYCLISTS!' : 'OI!';
+        yells.set(key, { until: t + (text.length > 5 ? 2 : 1.3), text });
+      }
+      return { lat, landed: false, dir: 0 };
+    }
+    const halfW = path.halfWidthAt(D);
+    const target = entry.dir > 0 ? Math.max(lat, halfW + 10) : Math.min(lat, -halfW - DITCH_GAP_PX - 4);
+    const f = Math.min(1, (t - entry.at) / 0.35);
+    const ease = f * f * (3 - 2 * f);
+    return { lat: lat + (target - lat) * ease, landed: f >= 1, dir: entry.dir };
+  }
+
+  function drawYell(key: string, wx: number, wy: number, t: number): void {
     const yell = yells.get(key);
-    if (yell !== undefined) {
-      if (t < yell.until) drawBubble(yell.text, px, py);
-      return; // each person only bothers once
-    }
-    if (Math.abs(px - helenX) < xThresh && Math.abs(py - helenY) < 22) {
-      const text = seed > 0.86 ? "LOOK WHERE YOU'RE GOING!" : seed > 0.68 ? 'BLOODY CYCLISTS!' : 'OI!';
-      yells.set(key, { until: t + (text.length > 5 ? 2 : 1.3), text });
-      drawBubble(text, px, py);
+    if (yell && t < yell.until) drawBubble(yell.text, wx, wy);
+  }
+
+  // splash/mud ring for someone freshly arrived in the drink
+  function drawLandedRing(P: { x: number; y: number }, dir: number, t: number, at: number): void {
+    const el = t - at - 0.35;
+    if (el < 0 || el > 0.7) return;
+    const rr = 4 + el * 10;
+    for (let k = 0; k < 10; k++) {
+      const a = (k / 10) * Math.PI * 2;
+      dynamicW.rect(P.x + Math.cos(a) * rr, P.y + Math.sin(a) * rr * 0.6, 1, 1).fill(
+        dir > 0 ? PAL.waterRipple : PAL.ditchMud,
+      );
     }
   }
 
-  // ---- dynamic layer: creatures + glints, cheap enough to redraw per frame ----
-  function drawDynamic(d: number, t: number, path: PathCurve, helenX: number): void {
-    dynamic.clear();
-    if (d + 300 < lastYellD) yells.clear(); // a new journey started
+  // ---- dynamic layer: wildlife + people ----
+  function drawDynamic(d: number, t: number, path: PathCurve): void {
+    dynamicW.clear();
+    if (d + 300 < lastYellD) {
+      yells.clear();
+      dodges.clear();
+    }
     lastYellD = d;
 
-    // time-shimmering glints out on the open water
-    for (let y = 0; y < viewH; y += 2) {
-      const D = d + helenY - y;
-      const rowSlot = Math.floor(D / 2);
-      const gh = hash01(rowSlot * 3 + Math.floor(t * 2));
-      if (gh < 0.22) {
-        const right = centreX + path.centreAt(D) + path.halfWidthAt(D);
-        dynamic.rect(right + 6 + gh * (viewW - right - 14), y, 3, 1).fill(PAL.waterGlint);
+    const DLO = d - viewH;
+    const DHI = d + viewH;
+
+    // shimmer glints on the open water
+    for (let n = Math.floor(DLO / 10); n <= Math.ceil(DHI / 10); n++) {
+      const gh = hash01(n * 3 + Math.floor(t * 2));
+      if (gh < 0.2) {
+        const P = fw(path, n * 10, path.halfWidthAt(n * 10) + 10 + gh * 160);
+        if (visible(P.x, P.y)) dynamicW.rect(P.x, P.y, 3, 1).fill(PAL.waterGlint);
       }
     }
 
-    // rabbits in the verge: sit, then a quick hop every few seconds
-    for (let n = Math.floor((d + helenY - viewH) / 130) - 1; n <= Math.floor((d + helenY) / 130) + 1; n++) {
+    // rabbits
+    for (let n = Math.floor(DLO / 130) - 1; n <= Math.floor(DHI / 130) + 1; n++) {
       const rr = hash01(n * 41 + 2);
       if (rr < 0.45) continue;
-      const y0 = helenY - (n * 130 + rr * 60 - d);
-      if (y0 < -6 || y0 > viewH + 6) continue;
-      const rxA = 4 + hash01(n * 43) * 30;
-      const cycle = ((t * 0.45 + rr * 7) % 1 + 1) % 1;
+      const cycle = (((t * 0.45 + rr * 7) % 1) + 1) % 1;
       const hop = cycle < 0.12 ? Math.sin((cycle / 0.12) * Math.PI) : 0;
-      const rx = rxA + (rr > 0.8 ? 1 : -1) * hop * 3;
-      const ry = y0 - hop * 2;
-      dynamic.rect(rx, ry, 3, 2).fill(0xb59a7a); // body
-      dynamic.rect(rx + (rr > 0.8 ? 2 : 0), ry - 1, 1, 1).fill(0xb59a7a); // ear
-      dynamic.rect(rx + (rr > 0.8 ? 0 : 2), ry + 1, 1, 1).fill(0xe8dcc8); // tail
+      const P = fw(path, n * 130 + rr * 60 - hop * 2, -46 - hash01(n * 43) * 30 + (rr > 0.8 ? 1 : -1) * hop * 3);
+      if (!visible(P.x, P.y)) continue;
+      dynamicW.rect(P.x, P.y, 3, 2).fill(0xb59a7a);
+      dynamicW.rect(P.x + (rr > 0.8 ? 2 : 0), P.y - 1, 1, 1).fill(0xb59a7a);
+      dynamicW.rect(P.x + (rr > 0.8 ? 0 : 2), P.y + 1, 1, 1).fill(0xe8dcc8);
     }
 
-    // butterflies over the flowers: sine-wander + wing flicker
-    for (let n = Math.floor((d + helenY - viewH) / 100) - 1; n <= Math.floor((d + helenY) / 100) + 1; n++) {
+    // butterflies
+    for (let n = Math.floor(DLO / 100) - 1; n <= Math.floor(DHI / 100) + 1; n++) {
       const br = hash01(n * 53 + 9);
       if (br < 0.45) continue;
-      const y0 = helenY - (n * 100 + br * 50 - d);
-      if (y0 < -8 || y0 > viewH + 8) continue;
-      const bx = 6 + hash01(n * 59) * 28 + Math.sin(t * 0.9 + br * 9) * 5 + Math.sin(t * 1.7 + br * 3) * 2;
-      const by = y0 + Math.sin(t * 1.3 + br * 5) * 3;
+      const P = fw(
+        path,
+        n * 100 + br * 50 + Math.sin(t * 1.3 + br * 5) * 3,
+        -46 - hash01(n * 59) * 28 + Math.sin(t * 0.9 + br * 9) * 5 + Math.sin(t * 1.7 + br * 3) * 2,
+      );
+      if (!visible(P.x, P.y)) continue;
       const open = Math.floor(t * 9 + br * 4) % 2 === 0;
       const colour = br > 0.8 ? PAL.flowerYellow : PAL.flowerWhite;
       if (open) {
-        dynamic.rect(bx - 1, by, 1, 1).fill(colour);
-        dynamic.rect(bx + 1, by, 1, 1).fill(colour);
+        dynamicW.rect(P.x - 1, P.y, 1, 1).fill(colour);
+        dynamicW.rect(P.x + 1, P.y, 1, 1).fill(colour);
       } else {
-        dynamic.rect(bx, by, 1, 1).fill(colour);
+        dynamicW.rect(P.x, P.y, 1, 1).fill(colour);
       }
     }
 
-    // blackbirds pecking about under the trees
-    for (let n = Math.floor((d + helenY - viewH) / 160) - 1; n <= Math.floor((d + helenY) / 160) + 1; n++) {
+    // blackbirds
+    for (let n = Math.floor(DLO / 160) - 1; n <= Math.floor(DHI / 160) + 1; n++) {
       const kr = hash01(n * 47 + 15);
       if (kr < 0.6) continue;
-      const y0 = helenY - (n * 160 + kr * 70 - d);
-      if (y0 < -4 || y0 > viewH + 4) continue;
-      const kx = 5 + hash01(n * 51 + 3) * 30;
+      const P = fw(path, n * 160 + kr * 70, -45 - hash01(n * 51 + 3) * 30);
+      if (!visible(P.x, P.y)) continue;
       const peck = Math.floor(t * 4 + kr * 12) % 3 === 0 ? 1 : 0;
-      dynamic.rect(kx, y0, 2, 2).fill(0x2e2e38); // body
-      dynamic.rect(kx + (kr > 0.8 ? -1 : 2), y0 + peck, 1, 1).fill(PAL.flowerYellow); // beak
+      dynamicW.rect(P.x, P.y, 2, 2).fill(0x2e2e38);
+      dynamicW.rect(P.x + (kr > 0.8 ? -1 : 2), P.y + peck, 1, 1).fill(PAL.flowerYellow);
     }
 
-    // dragonflies darting along the bank
-    for (let n = Math.floor((d + helenY - viewH) / 260) - 1; n <= Math.floor((d + helenY) / 260) + 1; n++) {
+    // dragonflies along the bank
+    for (let n = Math.floor(DLO / 260) - 1; n <= Math.floor(DHI / 260) + 1; n++) {
       const dr = hash01(n * 61 + 4);
       if (dr < 0.6) continue;
       const dObj = n * 260 + dr * 80;
-      const y0 = helenY - (dObj - d);
-      if (y0 < -8 || y0 > viewH + 8) continue;
-      const bank = centreX + path.centreAt(dObj) + path.halfWidthAt(dObj);
-      const dx = bank + 3 + Math.sin(t * 2.3 + dr * 11) * 6 + Math.sin(t * 4.1 + dr * 5) * 3;
-      const dy = y0 + Math.sin(t * 3.1 + dr * 7) * 4;
-      dynamic.rect(dx, dy, 3, 1).fill(0x4fc3c8);
-      if (Math.floor(t * 12) % 2 === 0) dynamic.rect(dx + 1, dy - 1, 1, 1).fill(0xa8e8ea); // wing glint
+      const P = fw(
+        path,
+        dObj + Math.sin(t * 3.1 + dr * 7) * 4,
+        path.halfWidthAt(dObj) + 3 + Math.sin(t * 2.3 + dr * 11) * 6 + Math.sin(t * 4.1 + dr * 5) * 3,
+      );
+      if (!visible(P.x, P.y)) continue;
+      dynamicW.rect(P.x, P.y, 3, 1).fill(0x4fc3c8);
+      if (Math.floor(t * 12) % 2 === 0) dynamicW.rect(P.x + 1, P.y - 1, 1, 1).fill(0xa8e8ea);
     }
 
-    // ducks (and the odd moorhen) paddling on the open water, trailing a wake
-    for (let n = Math.floor((d + helenY - viewH) / 240) - 1; n <= Math.floor((d + helenY) / 240) + 1; n++) {
+    // ducks & moorhens
+    for (let n = Math.floor(DLO / 240) - 1; n <= Math.floor(DHI / 240) + 1; n++) {
       const dr = hash01(n * 67 + 8);
       if (dr < 0.5) continue;
-      const y0 = helenY - (n * 240 + dr * 90 - d);
-      if (y0 < -6 || y0 > viewH + 6) continue;
-      const wx = viewW - 30 + Math.sin(t * 0.35 + dr * 8) * 8 - dr * 12;
+      const dD = n * 240 + dr * 90;
+      const P = fw(path, dD, path.halfWidthAt(dD) + 26 + Math.sin(t * 0.35 + dr * 8) * 8 + dr * 24);
+      if (!visible(P.x, P.y)) continue;
       const moorhen = dr > 0.85;
-      dynamic.rect(wx, y0, 3, 2).fill(moorhen ? 0x3a3a44 : 0x9a8a68); // body
-      dynamic.rect(wx + 2, y0 - 1, 1, 1).fill(moorhen ? 0x3a3a44 : 0x2e6d4f); // head
-      dynamic.rect(wx + 3, y0 - 1, 1, 1).fill(moorhen ? PAL.flowerRed : PAL.flowerYellow); // bill
-      dynamic.rect(wx - 2, y0 + 1, 2, 1).fill(PAL.waterRipple); // wake
+      dynamicW.rect(P.x, P.y, 3, 2).fill(moorhen ? 0x3a3a44 : 0x9a8a68);
+      dynamicW.rect(P.x + 2, P.y - 1, 1, 1).fill(moorhen ? 0x3a3a44 : 0x2e6d4f);
+      dynamicW.rect(P.x + 3, P.y - 1, 1, 1).fill(moorhen ? PAL.flowerRed : PAL.flowerYellow);
+      dynamicW.rect(P.x - 2, P.y + 1, 2, 1).fill(PAL.waterRipple);
     }
 
-    // the stupid stork: a rare treat (roughly every few minutes of riding) that
-    // lands IN THE ROAD ahead, waits until Helen is nearly on it, flaps lazily
-    // another hop up the path, and only clears off for good after the third
-    // time. Position is a pure function of d — replay-exact.
-    for (let n = Math.floor((d - 800) / 9000); n <= Math.floor((d + helenY) / 9000) + 1; n++) {
+    // anglers (they can end up in the drink)
+    for (let n = Math.floor(DLO / 1700) - 1; n <= Math.floor(DHI / 1700) + 1; n++) {
+      const ar = hash01(n * 91 + 5);
+      if (ar < 0.5) continue;
+      const aD = n * 1700 + ar * 400;
+      const halfW = path.halfWidthAt(aD);
+      const st = startle(`ang${n}`, aD, halfW - 2, t, hash01(n * 131), path);
+      const P = fw(path, aD, st.lat);
+      if (!visible(P.x, P.y)) continue;
+      const entry = dodges.get(`ang${n}`);
+      if (st.landed && entry) {
+        drawLandedRing(P, st.dir, t, entry.at);
+        const bob = Math.round(Math.sin(t * 2.5 + n));
+        dynamicW.rect(P.x - 4, P.y - 4 + bob, 8, 8).fill(0x4a4a52); // just the cap, afloat
+        dynamicW.rect(P.x - 2, P.y - 2 + bob, 2, 2).fill(0x6a6a78);
+      } else {
+        const twitch = (t * 0.5 + ar * 7) % 5 < 0.3 ? 2 : 0;
+        dynamicW.rect(P.x - 6, P.y - 6, 12, 12).fill(ar > 0.75 ? 0x6d7a8c : 0x7a5c48);
+        dynamicW.rect(P.x - 4, P.y - 8, 8, 2).fill(ar > 0.75 ? 0x5a6675 : 0x66493a);
+        dynamicW.rect(P.x - 4, P.y + 6, 8, 2).fill(ar > 0.75 ? 0x5a6675 : 0x66493a);
+        dynamicW.rect(P.x - 4, P.y - 4, 8, 8).fill(0x4a4a52); // flat cap
+        dynamicW.rect(P.x - 2, P.y - 2, 2, 2).fill(0x6a6a78);
+        for (let i = 0; i < 6; i++) {
+          const R = fw(path, aD, st.lat + 10 + i * 4);
+          dynamicW.rect(R.x, R.y, 2, 1).fill(0x8a6a42); // rod, out over the water
+        }
+        const F = fw(path, aD, st.lat + 36 + twitch);
+        dynamicW.rect(F.x, F.y + Math.round(Math.sin(t * 1.4 + ar * 9)), 3, 3).fill(PAL.flowerRed);
+        const TB = fw(path, aD + 6, st.lat - 10);
+        dynamicW.rect(TB.x - 4, TB.y - 3, 8, 6).fill(0x5a6a4a);
+      }
+      drawYell(`ang${n}`, P.x, P.y, t);
+    }
+
+    // joggers
+    for (let n = Math.floor(d / 2000) - 1; n <= Math.floor((d + viewH) / 2000) + 2; n++) {
+      const jr = hash01(n * 103 + 17);
+      if (jr < 0.55) continue;
+      const event = n * 2000 + jr * 500;
+      if (event < 600) continue;
+      const rel = 420 - 0.61 * (d - event);
+      if (rel < -80 || rel > viewH + 40) continue;
+      const jD = d + rel;
+      const st = startle(`jog${n}`, jD, (jr > 0.77 ? 0.6 : -0.6) * path.halfWidthAt(jD), t, hash01(n * 137), path);
+      const P = fw(path, jD, st.lat);
+      if (!visible(P.x, P.y)) continue;
+      const entry = dodges.get(`jog${n}`);
+      if (st.landed && entry) {
+        drawLandedRing(P, st.dir, t, entry.at);
+        dynamicW.rect(P.x - 3, P.y - 2, 7, 5).fill(jr > 0.7 ? 0xffb03a : 0xd8e84a); // soggy hi-vis
+        dynamicW.rect(P.x - 1, P.y - 4, 4, 3).fill(jr > 0.6 ? 0x3a2e26 : 0x6a4a2f);
+      } else {
+        const ph = Math.floor(t * 6 + jr * 4) % 2;
+        dynamicW.rect(P.x - 4, P.y - 2, 10, 8).fill(jr > 0.7 ? 0xffb03a : 0xd8e84a);
+        dynamicW.rect(P.x - 2, P.y, 6, 6).fill(jr > 0.6 ? 0x3a2e26 : 0x6a4a2f);
+        dynamicW.rect(P.x - 7, P.y + (ph ? -2 : 2), 2, 4).fill(0xe8b48c);
+        dynamicW.rect(P.x + 5, P.y + (ph ? 2 : -2), 2, 4).fill(0xe8b48c);
+      }
+      drawYell(`jog${n}`, P.x, P.y, t);
+    }
+
+    // dog walkers (the dog stays dry: it saw Helen coming)
+    for (let n = Math.floor(d / 3100) - 1; n <= Math.floor((d + viewH) / 3100) + 2; n++) {
+      const wr = hash01(n * 113 + 23);
+      if (wr < 0.5) continue;
+      const event = n * 3100 + wr * 600;
+      if (event < 600) continue;
+      const rel = 420 - 0.87 * (d - event);
+      if (rel < -80 || rel > viewH + 50) continue;
+      const wD = d + rel;
+      const st = startle(`dog${n}`, wD, (wr > 0.76 ? 0.55 : -0.55) * path.halfWidthAt(wD), t, hash01(n * 139), path);
+      const P = fw(path, wD, st.lat);
+      if (!visible(P.x, P.y)) continue;
+      const coat = wr > 0.7 ? 0x8c5a7a : 0x5a6d8c;
+      const entry = dodges.get(`dog${n}`);
+      if (st.landed && entry) {
+        drawLandedRing(P, st.dir, t, entry.at);
+        dynamicW.rect(P.x - 3, P.y - 2, 7, 5).fill(coat);
+        dynamicW.rect(P.x - 1, P.y - 4, 4, 3).fill(0x4a3a2e);
+      } else {
+        const swing = Math.floor(t * 3 + wr * 5) % 2;
+        dynamicW.rect(P.x - 4, P.y - 4, 10, 10).fill(coat);
+        dynamicW.rect(P.x - 2, P.y - 2, 6, 6).fill(0x4a3a2e);
+        dynamicW.rect(P.x - 7, P.y + (swing ? 0 : 2), 2, 4).fill(0xe8b48c);
+      }
+      // the dog, out front on the lead, top-down: long body, head sniffing
+      const weave = Math.sin(t * 1.1 + wr * 8);
+      const DG = fw(path, wD + 22, st.lat + weave * 8);
+      if (visible(DG.x, DG.y)) {
+        const dogCol = wr > 0.6 ? 0x8a6a4a : 0xe8dcc8;
+        const dogDark = wr > 0.6 ? 0x5a4632 : 0x9a8a72;
+        const headOff = weave > 0 ? 2 : -2;
+        dynamicW.rect(DG.x - 2, DG.y - 4, 5, 9).fill(dogCol);
+        dynamicW.rect(DG.x - 1, DG.y - 1, 3, 4).fill(dogDark);
+        dynamicW.rect(DG.x - 2 + headOff, DG.y - 8, 5, 4).fill(dogCol);
+        dynamicW.rect(DG.x - 2 + headOff, DG.y - 8, 1, 2).fill(dogDark);
+        dynamicW.rect(DG.x + 2 + headOff, DG.y - 8, 1, 2).fill(dogDark);
+        dynamicW.rect(DG.x + headOff, DG.y - 9, 1, 1).fill(0x2e2e38);
+        dynamicW.rect(DG.x + (Math.floor(t * 8) % 2 ? 3 : -2), DG.y + 5, 2, 2).fill(dogCol);
+        dynamicW.rect((P.x + DG.x) / 2, (P.y + DG.y) / 2, 2, 2).fill(0x3a3a44); // lead
+      }
+      drawYell(`dog${n}`, P.x, P.y, t);
+    }
+
+    // oncoming cyclists (they hold their line, but they have opinions)
+    for (let n = Math.floor(d / 2600) - 1; n <= Math.floor((d + viewH) / 2600) + 2; n++) {
+      const cr = hash01(n * 97 + 13);
+      if (cr < 0.5) continue;
+      const event = n * 2600 + cr * 300;
+      if (event < 2500) continue;
+      const rel = 520 - 2.6 * (d - event);
+      if (rel < -80 || rel > viewH + 60) continue;
+      const cD = d + rel;
+      const lat = (cr > 0.75 ? 0.45 : -0.45) * path.halfWidthAt(cD) + Math.sin(t * 3 + cr * 9) * 1.5;
+      const P = fw(path, cD, lat);
+      if (!visible(P.x, P.y)) continue;
+      const STRANGER: Record<string, number> = {
+        ...HELEN_PX,
+        y: 0x3a6d8c,
+        Y: 0x4a7da0,
+        r: 0x2e6d4f,
+        R: 0x265a41,
+        b: 0x6a4a2f,
+      };
+      for (let row = 0; row < HELEN_MAP.length; row++) {
+        const line = HELEN_MAP[HELEN_MAP.length - 1 - row]!;
+        for (let col = 0; col < line.length; col++) {
+          const ch = line[col]!;
+          if (ch === '.') continue;
+          dynamicW.rect(P.x - 9 + col * 2, P.y - 18 + row * 2, 2, 2).fill(STRANGER[ch]!);
+        }
+      }
+      const key = `cyc${n}`;
+      if (!yells.has(key) && Math.abs(P.x - helenWX) < 24 && Math.abs(P.y - helenWY) < 22) {
+        const text = cr > 0.8 ? "LOOK WHERE YOU'RE GOING!" : 'OI!';
+        yells.set(key, { until: t + (text.length > 5 ? 2 : 1.3), text });
+      }
+      drawYell(key, P.x, P.y, t);
+    }
+
+    // the stupid stork (rare): lands in the road, hops ahead, leaves the third time
+    for (let n = Math.floor((d - 800) / 9000); n <= Math.floor((d + viewH) / 9000) + 1; n++) {
       const sr = hash01(n * 79 + 3);
       if (sr < 0.35) continue;
-      const TRIG = 105; // how close Helen gets before it deigns to move
-      const FLY = 70; // px of Helen-travel per unhurried hop
-      const hop1 = 170 + hash01(n * 83 + 1) * 60;
-      const hop2 = 170 + hash01(n * 83 + 2) * 60;
+      const TRIG = 105;
+      const FLY = 70;
       const sits = [n * 9000 + 1200 + sr * 5000, 0, 0];
-      sits[1] = sits[0]! + hop1;
-      sits[2] = sits[1]! + hop2;
+      sits[1] = sits[0]! + 170 + hash01(n * 83 + 1) * 60;
+      sits[2] = sits[1]! + 170 + hash01(n * 83 + 2) * 60;
       let birdD: number;
-      let airborne = 0; // 0 grounded → 1 mid-hop
+      let airborne = 0;
       let leaving = 0;
       if (d < sits[0]! - TRIG) {
         birdD = sits[0]!;
@@ -706,397 +904,55 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
         birdD = sits[k]! + (sits[k + 1]! - sits[k]!) * f * f * (3 - 2 * f);
         airborne = f < 1 ? Math.sin(f * Math.PI) : 0;
       } else {
-        // third approach: fine, FINE — actually leaves
         leaving = (d - (sits[2]! - TRIG)) / (FLY * 2.2);
         if (leaving >= 1) continue;
         birdD = sits[2]! + leaving * 320;
         airborne = 1;
       }
-      const sy = helenY - (birdD - d) - leaving * leaving * 120;
-      if (sy < -16 || sy > viewH + 16) continue;
-      const sx = centreX + path.centreAt(birdD) + (hash01(n * 89) - 0.5) * 14 + (airborne ? Math.sin(d * 0.09) * 2 : 0);
+      const P = fw(path, birdD, (hash01(n * 89) - 0.5) * 14 + (airborne ? Math.sin(d * 0.09) * 2 : 0));
+      const sy = P.y - leaving * leaving * 120;
+      if (!visible(P.x, sy)) continue;
       const flap = airborne > 0.05 && Math.floor(t * 9) % 2 === 0;
       if (airborne > 0.05) {
-        // wings out, legs trailing behind
-        dynamic.rect(sx - (flap ? 6 : 4), sy, flap ? 12 : 8, 2).fill(0xf0ece0);
-        dynamic.rect(sx - (flap ? 6 : 4), sy, 2, 2).fill(0x3a3a44); // black wingtips
-        dynamic.rect(sx + (flap ? 4 : 2), sy, 2, 2).fill(0x3a3a44);
-        dynamic.rect(sx - 1, sy + 2, 1, 3).fill(0x4a4a52); // trailing legs
-        dynamic.rect(sx, sy - 2, 2, 2).fill(0xf0ece0); // head forward
-        dynamic.rect(sx + 1, sy - 3, 2, 1).fill(0xe8a13d); // beak
+        dynamicW.rect(P.x - (flap ? 6 : 4), sy, flap ? 12 : 8, 2).fill(0xf0ece0);
+        dynamicW.rect(P.x - (flap ? 6 : 4), sy, 2, 2).fill(0x3a3a44);
+        dynamicW.rect(P.x + (flap ? 4 : 2), sy, 2, 2).fill(0x3a3a44);
+        dynamicW.rect(P.x - 1, sy + 2, 1, 3).fill(0x4a4a52);
+        dynamicW.rect(P.x, sy - 2, 2, 2).fill(0xf0ece0);
+        dynamicW.rect(P.x + 1, sy - 3, 2, 1).fill(0xe8a13d);
       } else {
-        // standing in the road, gormless
-        dynamic.rect(sx - 1, sy + 3, 1, 4).fill(0x4a4a52); // legs
-        dynamic.rect(sx + 1, sy + 3, 1, 4).fill(0x4a4a52);
-        dynamic.rect(sx - 2, sy, 5, 3).fill(0xf0ece0); // body
-        dynamic.rect(sx + 2, sy + 1, 1, 2).fill(0x3a3a44); // folded black wingtip
-        dynamic.rect(sx - 1, sy - 4, 1, 4).fill(0xf0ece0); // neck
-        dynamic.rect(sx - 2, sy - 5, 2, 2).fill(0xf0ece0); // head
-        const peer = Math.floor(t * 2 + sr * 9) % 4 === 0 ? 1 : 0; // peers about
-        dynamic.rect(sx - 3 - peer, sy - 4, 2, 1).fill(0xe8a13d); // beak
+        dynamicW.rect(P.x - 1, sy + 3, 1, 4).fill(0x4a4a52);
+        dynamicW.rect(P.x + 1, sy + 3, 1, 4).fill(0x4a4a52);
+        dynamicW.rect(P.x - 2, sy, 5, 3).fill(0xf0ece0);
+        dynamicW.rect(P.x + 2, sy + 1, 1, 2).fill(0x3a3a44);
+        dynamicW.rect(P.x - 1, sy - 4, 1, 4).fill(0xf0ece0);
+        dynamicW.rect(P.x - 2, sy - 5, 2, 2).fill(0xf0ece0);
+        const peer = Math.floor(t * 2 + sr * 9) % 4 === 0 ? 1 : 0;
+        dynamicW.rect(P.x - 3 - peer, sy - 4, 2, 1).fill(0xe8a13d);
       }
     }
 
-    // anglers on the bank, seen from above: cap-circle over shoulders, legs
-    // toward the water, rod a thin line out over the canal to a bobbing float —
-    // occasionally it twitches (nothing is ever caught)
-    for (let n = Math.floor((d + helenY - viewH) / 1700) - 1; n <= Math.floor((d + helenY) / 1700) + 1; n++) {
-      const ar = hash01(n * 91 + 5);
-      if (ar < 0.5) continue;
-      const aD = n * 1700 + ar * 400;
-      const y0 = helenY - (aD - d);
-      if (y0 < -10 || y0 > viewH + 10) continue;
-      const bank = centreX + path.centreAt(aD) + path.halfWidthAt(aD);
-      const ax = bank - 2; // sat right on the edge
-      const twitch = (t * 0.5 + ar * 7) % 5 < 0.3 ? 2 : 0;
-      dynamic.rect(ax - 6, y0 - 6, 12, 12).fill(ar > 0.75 ? 0x6d7a8c : 0x7a5c48); // shoulders/jacket
-      dynamic.rect(ax - 4, y0 - 8, 8, 2).fill(ar > 0.75 ? 0x5a6675 : 0x66493a); // rounded
-      dynamic.rect(ax - 4, y0 + 6, 8, 2).fill(ar > 0.75 ? 0x5a6675 : 0x66493a);
-      dynamic.rect(ax + 6, y0 - 4, 8, 2).fill(0x3a3a44); // legs, dangling bankward
-      dynamic.rect(ax + 6, y0 + 2, 8, 2).fill(0x3a3a44);
-      dynamic.rect(ax - 4, y0 - 4, 8, 8).fill(0x4a4a52); // flat cap from above
-      dynamic.rect(ax - 2, y0 - 2, 2, 2).fill(0x6a6a78); // cap button
-      dynamic.rect(ax + 10, y0, 22, 1).fill(0x8a6a42); // rod, straight out over the water
-      const floatX = ax + 34 + twitch;
-      const floatY = y0 + Math.round(Math.sin(t * 1.4 + ar * 9));
-      dynamic.rect(floatX, floatY, 3, 3).fill(PAL.flowerRed); // float
-      if ((t * 1.4 + ar * 9) % 6 < 0.5) {
-        dynamic.rect(floatX - 3, floatY - 3, 8, 1).fill(PAL.waterRipple); // ripple off the float
-      }
-      dynamic.rect(ax - 14, y0 + 4, 8, 6).fill(0x5a6a4a); // tackle box
-      dynamic.rect(ax - 12, y0 + 6, 4, 2).fill(0x8a9a6a); // clasp
-      maybeYell(`ang${n}`, ax, y0, helenX, t, hash01(n * 131), 18);
-    }
-
-    // joggers, overtaken slowly: hi-vis vest, arms pumping
-    for (let n = Math.floor(d / 2000) - 1; n <= Math.floor((d + helenY) / 2000) + 2; n++) {
-      const jr = hash01(n * 103 + 17);
-      if (jr < 0.55) continue;
-      const event = n * 2000 + jr * 500;
-      if (event < 600) continue;
-      const rel = 420 - 0.61 * (d - event); // she gains at bike-minus-jogger pace
-      if (rel < -60 || rel > viewH + 40) continue;
-      const jy = helenY - rel;
-      const jD = d + rel;
-      const jx = centreX + path.centreAt(jD) + (jr > 0.77 ? 0.6 : -0.6) * path.halfWidthAt(jD);
-      const ph = Math.floor(t * 6 + jr * 4) % 2;
-      dynamic.rect(jx - 4, jy - 2, 10, 8).fill(jr > 0.7 ? 0xffb03a : 0xd8e84a); // hi-vis
-      dynamic.rect(jx - 2, jy, 6, 6).fill(jr > 0.6 ? 0x3a2e26 : 0x6a4a2f); // head
-      dynamic.rect(jx - 7, jy + (ph ? -2 : 2), 2, 4).fill(0xe8b48c); // pumping arms
-      dynamic.rect(jx + 5, jy + (ph ? 2 : -2), 2, 4).fill(0xe8b48c);
-      maybeYell(`jog${n}`, jx, jy, helenX, t, hash01(n * 137));
-    }
-
-    // dog walkers, ambling: the dog out front on the lead, sniffing everything
-    for (let n = Math.floor(d / 3100) - 1; n <= Math.floor((d + helenY) / 3100) + 2; n++) {
-      const wr = hash01(n * 113 + 23);
-      if (wr < 0.5) continue;
-      const event = n * 3100 + wr * 600;
-      if (event < 600) continue;
-      const rel = 420 - 0.87 * (d - event); // walking pace: overtaken briskly
-      if (rel < -60 || rel > viewH + 50) continue;
-      const wy = helenY - rel;
-      const wD = d + rel;
-      const wx = centreX + path.centreAt(wD) + (wr > 0.76 ? 0.55 : -0.55) * path.halfWidthAt(wD);
-      const coat = wr > 0.7 ? 0x8c5a7a : 0x5a6d8c;
-      const swing = Math.floor(t * 3 + wr * 5) % 2;
-      dynamic.rect(wx - 4, wy - 4, 10, 10).fill(coat); // coat/shoulders
-      dynamic.rect(wx - 2, wy - 2, 6, 6).fill(0x4a3a2e); // head
-      dynamic.rect(wx - 7, wy + (swing ? 0 : 2), 2, 4).fill(0xe8b48c); // arm swing
-      const weave = Math.sin(t * 1.1 + wr * 8);
-      const dogx = wx + weave * 8;
-      const dogy = wy - 22;
-      const dogCol = wr > 0.6 ? 0x8a6a4a : 0xe8dcc8;
-      const dogDark = wr > 0.6 ? 0x5a4632 : 0x9a8a72;
-      // top-down dog: long body nose-to-haunch, head out front mid-sniff,
-      // tail wagging SIDEWAYS behind
-      const headOff = weave > 0 ? 2 : -2;
-      dynamic.rect(dogx - 2, dogy - 4, 5, 9).fill(dogCol); // body
-      dynamic.rect(dogx - 1, dogy - 1, 3, 4).fill(dogDark); // saddle marking
-      dynamic.rect(dogx - 2 + headOff, dogy - 8, 5, 4).fill(dogCol); // head
-      dynamic.rect(dogx - 2 + headOff, dogy - 8, 1, 2).fill(dogDark); // ears
-      dynamic.rect(dogx + 2 + headOff, dogy - 8, 1, 2).fill(dogDark);
-      dynamic.rect(dogx + headOff, dogy - 9, 1, 1).fill(0x2e2e38); // nose
-      dynamic.rect(dogx + (Math.floor(t * 8) % 2 ? 3 : -2), dogy + 5, 2, 2).fill(dogCol); // wag
-      // the lead, straining back to the walker's hand
-      dynamic.rect(wx + (dogx - wx) * 0.35, wy - 6 + (dogy - wy + 4) * 0.35, 2, 2).fill(0x3a3a44);
-      dynamic.rect(wx + (dogx - wx) * 0.7, wy - 6 + (dogy - wy + 4) * 0.7, 2, 2).fill(0x3a3a44);
-      maybeYell(`dog${n}`, wx, wy, helenX, t, hash01(n * 139));
-    }
-
-    // oncoming cyclists: breeze past on the other side of the path — pure
-    // scenery, no collision (moving-obstacle fairness is a v1.5 question).
-    // None in the opening stretch: the calm start stays uncluttered.
-    for (let n = Math.floor(d / 2600) - 1; n <= Math.floor((d + helenY) / 2600) + 2; n++) {
-      const cr = hash01(n * 97 + 13);
-      if (cr < 0.5) continue;
-      const event = n * 2600 + cr * 300;
-      if (event < 2500) continue; // first stranger ≈28s in, at the earliest
-      const rel = 520 - 2.6 * (d - event); // closes at Helen-speed + their speed
-      if (rel < -80 || rel > viewH + 60) continue;
-      const cy = helenY - rel;
-      const cD = d + rel;
-      const side = cr > 0.75 ? 0.45 : -0.45;
-      const cx2 = centreX + path.centreAt(cD) + side * path.halfWidthAt(cD) + Math.sin(t * 3 + cr * 9) * 1.5;
-      // Helen's sprite flipped to ride the other way, in a stranger's colours
-      const STRANGER: Record<string, number> = {
-        ...HELEN_PX,
-        y: 0x3a6d8c, Y: 0x4a7da0, // cap, not a sunhat
-        r: 0x2e6d4f, R: 0x265a41, // green jacket
-        b: 0x6a4a2f, // brown shorts
-      };
-      for (let row = 0; row < HELEN_MAP.length; row++) {
-        const line = HELEN_MAP[HELEN_MAP.length - 1 - row]!;
-        for (let col = 0; col < line.length; col++) {
-          const ch = line[col]!;
-          if (ch === '.') continue;
-          dynamic.rect(cx2 - 10 + col * 2, cy - 18 + row * 2, 2, 2).fill(STRANGER[ch]!);
-        }
-      }
-      maybeYell(`cyc${n}`, cx2, cy, helenX, t, hash01(n * 149));
-    }
-
-    // a heron on the bank, rare — stands tall, flaps off as Helen approaches
-    for (let n = Math.floor((d + helenY - viewH) / 1400) - 1; n <= Math.floor((d + helenY) / 1400) + 2; n++) {
+    // the heron: stands on the bank, flaps off as Helen approaches
+    for (let n = Math.floor(DLO / 1400) - 1; n <= Math.floor(DHI / 1400) + 2; n++) {
       const hr = hash01(n * 71 + 6);
       if (hr < 0.6) continue;
       const dObj = n * 1400 + hr * 300;
       const dist = dObj - d;
-      if (dist < -200 || dist > viewH + 20) continue;
-      const flight = Math.max(0, Math.min(1, (90 - dist) / 140)); // 0 standing → 1 gone
-      const bank = centreX + path.centreAt(dObj) + path.halfWidthAt(dObj);
-      const hx = bank + 6 + flight * 45;
-      const hy = helenY - dist - flight * flight * 220;
-      if (hy < -20) continue;
-      dynamic.rect(hx, hy - 6, 2, 6).fill(0x9aa8b5); // neck
-      dynamic.rect(hx + 1, hy - 7, 3, 2).fill(0x9aa8b5); // head
-      dynamic.rect(hx + 4, hy - 7, 2, 1).fill(PAL.flowerYellow); // beak
+      if (dist < -300 || dist > viewH + 20) continue;
+      const flight = Math.max(0, Math.min(1, (90 - dist) / 140));
+      const P = fw(path, dObj, path.halfWidthAt(dObj) + 6 + flight * 45);
+      const hy = P.y - flight * flight * 220;
+      if (!visible(P.x, hy)) continue;
+      dynamicW.rect(P.x, hy - 6, 2, 6).fill(0x9aa8b5);
+      dynamicW.rect(P.x + 1, hy - 7, 3, 2).fill(0x9aa8b5);
+      dynamicW.rect(P.x + 4, hy - 7, 2, 1).fill(PAL.flowerYellow);
       const flap = flight > 0 && Math.floor(t * 8) % 2 === 0;
-      dynamic.rect(hx - (flap ? 4 : 2), hy - 1, flap ? 10 : 6, 2).fill(0x8494a3); // wings/body
-      if (flight < 0.2) dynamic.rect(hx, hy + 1, 1, 4).fill(0x4a4a52); // legs while standing
+      dynamicW.rect(P.x - (flap ? 4 : 2), hy - 1, flap ? 10 : 6, 2).fill(0x8494a3);
+      if (flight < 0.2) dynamicW.rect(P.x, hy + 1, 1, 4).fill(0x4a4a52);
     }
   }
 
-  // The signature death: a splash, spreading rings, then just Helen's eyes above
-  // the waterline beneath her floating yellow sunhat — with the frog on top.
-  function drawSplashScene(e: number, curr: SimState, path: PathCurve): void {
-    const sx = Math.round(centreX + path.centreAt(curr.d) + curr.x * curr.halfW + 5);
-    const sy = helenY;
-
-    if (e < 0.45) {
-      // the big daft sploosh: white core + flung droplets
-      const burst = e / 0.45;
-      const core = Math.max(1, 6 * (1 - burst));
-      dynamic.rect(sx - core / 2, sy - core / 2, core, core).fill(PAL.flowerWhite);
-      for (let k = 0; k < 10; k++) {
-        const a = (k / 10) * Math.PI * 2 + hash01(k) * 0.5;
-        const rr = 3 + burst * (10 + hash01(k * 3) * 8);
-        dynamic.rect(sx + Math.cos(a) * rr, sy + Math.sin(a) * rr * 0.7, 1, 1).fill(
-          k % 3 === 0 ? PAL.waterGlint : PAL.flowerWhite,
-        );
-      }
-    }
-
-    // spreading ripple rings through the whole scene
-    for (let ring = 0; ring < 3; ring++) {
-      const rr = e * 26 - ring * 7;
-      if (rr < 3 || rr > 24) continue;
-      for (let k = 0; k < 14; k++) {
-        const a = (k / 14) * Math.PI * 2;
-        dynamic.rect(sx + Math.cos(a) * rr, sy + Math.sin(a) * rr * 0.6, 1, 1).fill(PAL.waterRipple);
-      }
-    }
-
-  }
-
-  // Full-screen cutscene: close-up of the aftermath. All water; the floating
-  // sunhat; just Helen's eyes above the line; the frog in residence, blinking.
-  function drawCutscene(e: number): void {
-    const cx = centreX;
-    const wy = Math.round(viewH * 0.52);
-
-    dynamic.rect(0, 0, viewW, viewH).fill(PAL.waterBase);
-    // broken water texture, denser below the waterline
-    for (let y = 0; y < viewH; y += 4) {
-      const h = hash01(y * 31 + Math.floor(e * 2));
-      if (h < (y > wy ? 0.5 : 0.3)) {
-        dynamic.rect(h * viewW * 1.4 - 10, y, 6 + h * 18, 1).fill(y > wy + 14 ? PAL.waterBank : PAL.waterRipple);
-      }
-    }
-
-    // rings spreading from Helen at the waterline
-    for (let ring = 0; ring < 3; ring++) {
-      const rr = 34 + ((e * 22 + ring * 16) % 48);
-      for (let k = 0; k < 22; k++) {
-        const a = (k / 22) * Math.PI * 2;
-        dynamic.rect(cx + Math.cos(a) * rr, wy + Math.sin(a) * rr * 0.35, 2, 1).fill(PAL.waterRipple);
-      }
-    }
-
-    const bob = Math.round(Math.sin(e * 2.6));
-    const hy = wy + bob;
-
-    // just her (blue) eyes above the water, looking up at the frog
-    dynamic.rect(cx - 20, hy - 6, 40, 6).fill(0xe8b48c);
-    for (const ex of [-13, 7]) {
-      dynamic.rect(cx + ex, hy - 5, 6, 4).fill(0xf5f2e8); // sclera
-      dynamic.rect(cx + ex + 1, hy - 5, 4, 3).fill(0x3f6fd6); // blue iris, raised
-      dynamic.rect(cx + ex + 2, hy - 4, 2, 2).fill(0x2e2e38); // pupil
-      dynamic.rect(cx + ex + 1, hy - 5, 1, 1).fill(0xffffff); // glint
-    }
-    // waterline lapping at her
-    dynamic.rect(cx - 24, hy, 48, 2).fill(PAL.waterGlint);
-
-    // the sunhat: wide brim with shaded underside, red band, domed crown
-    dynamic.rect(cx - 42, hy - 9, 84, 2).fill(0xd9b959);
-    dynamic.rect(cx - 42, hy - 12, 84, 3).fill(0xf9e29a);
-    dynamic.rect(cx - 26, hy - 15, 52, 3).fill(0xc0392b); // band, matching her top
-    dynamic.rect(cx - 26, hy - 27, 52, 12).fill(0xf2d16b);
-    dynamic.rect(cx - 20, hy - 31, 40, 4).fill(0xf2d16b);
-    dynamic.rect(cx - 20, hy - 30, 10, 2).fill(0xf9e29a); // crown highlight
-
-    // the frog, enormous and unbothered, on the crown
-    const fy = hy - 31;
-    dynamic.rect(cx - 11, fy - 8, 22, 8).fill(0x5da936);
-    dynamic.rect(cx - 11, fy - 1, 22, 1).fill(0x74b85c); // belly
-    dynamic.rect(cx - 14, fy - 3, 3, 3).fill(0x4c8c2b); // folded legs
-    dynamic.rect(cx + 11, fy - 3, 3, 3).fill(0x4c8c2b);
-    dynamic.rect(cx - 5, fy - 2, 10, 1).fill(0x4c8c2b); // mouth
-    for (const ex of [-9, 3]) {
-      dynamic.rect(cx + ex, fy - 13, 6, 6).fill(0x5da936); // eye bumps
-      const blink = (e * 2) % 3.1 < 0.25;
-      if (blink) {
-        dynamic.rect(cx + ex + 1, fy - 10, 4, 1).fill(0x4c8c2b);
-      } else {
-        dynamic.rect(cx + ex + 1, fy - 12, 4, 4).fill(0xf5f2e8);
-        dynamic.rect(cx + ex + 2, fy - 11, 2, 2).fill(0x2e2e38);
-      }
-    }
-
-    // a few bubbles still coming up
-    for (let k = 0; k < 3; k++) {
-      const by = wy + 22 - ((e * 14 + k * 9) % 30);
-      const bx = cx - 34 + k * 30 + Math.sin(e * 3 + k * 2) * 3;
-      dynamic.rect(bx, by, 2, 2).fill(PAL.waterGlint);
-    }
-  }
-
-  // Crash cutscene: upside down up a tree, hanging by her knees from a branch.
-  // Shared by tree, bush and hedge deaths — it's all woodland in the end.
-  function drawTreeCut(e: number): void {
-    const cx = centreX;
-    dynamic.rect(0, 0, viewW, viewH).fill(PAL.canopyShade);
-    for (let k = 0; k < 170; k++) {
-      const lx = hash01(k * 7) * viewW;
-      const ly = hash01(k * 11) * viewH;
-      dynamic.rect(lx, ly, 2, 2).fill(
-        hash01(k * 3) < 0.5 ? PAL.canopy : hash01(k * 5) < 0.5 ? PAL.canopyLight : PAL.undergrowthDark,
-      );
-    }
-    // the branch she ended up on
-    const by = Math.round(viewH * 0.28);
-    dynamic.rect(0, by, viewW, 6).fill(0x77542f);
-    dynamic.rect(0, by + 2, viewW, 1).fill(0x8a6a42);
-    dynamic.rect(cx - 50, by - 2, 5, 2).fill(0x77542f); // knots
-    dynamic.rect(cx + 38, by + 6, 4, 3).fill(0x77542f);
-
-    const swing = Math.sin(e * 1.7) * 3; // she sways gently
-    // shins hooked over the branch
-    dynamic.rect(cx - 9, by - 3, 4, 5).fill(0xe8b48c);
-    dynamic.rect(cx + 5, by - 3, 4, 5).fill(0xe8b48c);
-    dynamic.rect(cx - 9, by + 4, 18, 8).fill(0x35507d); // shorts
-    dynamic.rect(cx - 7 + swing * 0.3, by + 12, 14, 12).fill(0xc0392b); // torso
-    dynamic.rect(cx - 11 + swing * 0.8, by + 14, 3, 13).fill(0xe8b48c); // dangling arms
-    dynamic.rect(cx + 8 + swing * 0.8, by + 14, 3, 13).fill(0xe8b48c);
-    // head, upside down: mouth a small startled o ABOVE the eyes; hair hangs down
-    const hx = cx - 6 + swing;
-    dynamic.rect(hx, by + 24, 12, 10).fill(0xe8b48c);
-    dynamic.rect(hx + 4, by + 26, 3, 2).fill(0x8a4a2f); // o
-    for (const ex of [1, 7]) {
-      dynamic.rect(hx + ex, by + 29, 4, 3).fill(0xf5f2e8);
-      dynamic.rect(hx + ex + 1, by + 29, 2, 3).fill(0x3f6fd6); // blue
-      dynamic.rect(hx + ex + 1, by + 30, 2, 1).fill(0x2e2e38);
-    }
-    dynamic.rect(hx - 1, by + 34, 14, 4).fill(0xf2d16b); // hair, obeying gravity
-    dynamic.rect(hx + 1, by + 38, 3, 3).fill(0xf2d16b);
-    dynamic.rect(hx + 8, by + 38, 3, 2).fill(0xf2d16b);
-
-    // the hat made its own way down
-    const hatY = Math.min(viewH - 26, by + 60 + e * 30);
-    dynamic.rect(cx + 26, hatY, 30, 3).fill(0xf9e29a);
-    dynamic.rect(cx + 32, hatY - 5, 18, 5).fill(0xf2d16b);
-
-    // dislodged leaves, drifting down
-    for (let k = 0; k < 5; k++) {
-      const ly = (e * 16 + k * 37) % (viewH + 10);
-      const lx = cx - 50 + k * 24 + Math.sin(e * 1.2 + k * 2) * 8;
-      dynamic.rect(lx, ly, 2, 2).fill(PAL.canopyLight);
-    }
-
-    // a robin considers her situation
-    dynamic.rect(cx - 44, by - 4, 4, 4).fill(0x4a4a52);
-    dynamic.rect(cx - 44, by - 2, 2, 2).fill(0xd9683d);
-    dynamic.rect(cx - 41, by - 4, 1, 1).fill(0x2e2e38); // eye
-  }
-
-  // Ditch cutscene: sat waist-deep in the mud, hat still on, only the eyes clean.
-  function drawMudCut(e: number): void {
-    const cx = centreX;
-    const wy = Math.round(viewH * 0.58);
-    dynamic.rect(0, 0, viewW, viewH).fill(PAL.ditchMud);
-    for (let y = 0; y < viewH; y += 3) {
-      const h = hash01(y * 13 + 7);
-      if (h < 0.55) {
-        dynamic.rect(h * viewW * 1.6 - 20, y, 5 + h * 20, 1).fill(h < 0.28 ? 0x6f5c3a : 0x9a8458);
-      }
-    }
-    // grassy ditch lips top and bottom
-    for (let k = 0; k < 26; k++) {
-      const gx = hash01(k * 17) * viewW;
-      dynamic.rect(gx, hash01(k * 19) * 10, 2, 4).fill(PAL.undergrowth);
-      dynamic.rect(gx, viewH - 8 - hash01(k * 23) * 6, 2, 5).fill(PAL.undergrowth);
-    }
-    // the wet channel she's sitting in
-    dynamic.rect(0, wy + 6, viewW, 16).fill(0x6f5c3a);
-
-    const bob = Math.round(Math.sin(e * 2) * 1);
-    const hy = wy + bob;
-    // mud-caked body and head — one brown lump with a hat
-    dynamic.rect(cx - 16, hy - 14, 32, 20).fill(0x7a6644);
-    dynamic.rect(cx - 13, hy - 18, 26, 6).fill(0x7a6644); // slumped shoulders
-    dynamic.rect(cx - 10, hy - 34, 20, 17).fill(0x7a6644); // head
-    // hat still on, splattered
-    dynamic.rect(cx - 20, hy - 38, 40, 3).fill(0xf9e29a);
-    dynamic.rect(cx - 12, hy - 46, 24, 8).fill(0xf2d16b);
-    dynamic.rect(cx - 6, hy - 44, 4, 3).fill(0x7a6644); // splat
-    dynamic.rect(cx + 6, hy - 38, 5, 2).fill(0x7a6644);
-    dynamic.rect(cx - 16, hy - 37, 3, 2).fill(0x7a6644);
-    // the only clean part of her: blinking blue eyes
-    const blink = (e * 2.2) % 3.4 < 0.22;
-    for (const ex of [-8, 2]) {
-      if (blink) {
-        dynamic.rect(cx + ex, hy - 27, 6, 1).fill(0x5a4a30);
-      } else {
-        dynamic.rect(cx + ex, hy - 29, 6, 4).fill(0xf5f2e8);
-        dynamic.rect(cx + ex + 1, hy - 29, 4, 3).fill(0x3f6fd6);
-        dynamic.rect(cx + ex + 2, hy - 28, 2, 2).fill(0x2e2e38);
-      }
-    }
-    // mud drips from the brim and chin
-    for (let k = 0; k < 4; k++) {
-      const dy = (e * 20 + k * 11) % 24;
-      dynamic.rect(cx - 14 + k * 9, hy - 36 + dy, 1, 2).fill(0x6f5c3a);
-    }
-    // a bubble surfaces beside her, occasionally
-    const bub = (e * 0.9) % 1;
-    if (bub < 0.7) {
-      const br = 1 + bub * 3;
-      dynamic.rect(cx - 30 - br / 2, hy + 10 - br / 2, br, br).fill(0x9a8458);
-    }
-  }
-
-  // Leg tracker, top right: Helen's dot winding up a little track from the last
-  // pub (bottom) to the next pint (top). One leg at a time — no numbers.
+  // ---- leg tracker (screen space) ----
   function drawLegMap(d: number): void {
     let next = PUBS.findIndex((pub) => pub.d > d);
     if (next === -1) next = PUBS.length - 1;
@@ -1104,19 +960,195 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
     const to = PUBS[next]!.d;
     const frac = Math.max(0, Math.min(1, (d - from) / Math.max(1, to - from)));
     const mapX = viewW - 9;
-    const mapTop = 26; // sits below the HUD's top-right text
+    const mapTop = 26;
     const mapH = 42;
-    dynamic.rect(mapX - 5, mapTop - 4, 11, mapH + 10).fill({ color: 0x1c2431, alpha: 0.4 });
+    screenG.rect(mapX - 5, mapTop - 4, 11, mapH + 10).fill({ color: 0x1c2431, alpha: 0.4 });
     for (let i = 0; i <= mapH; i += 1) {
-      dynamic.rect(mapX + Math.sin(i * 0.22) * 1.5, mapTop + i, 1, 1).fill(0x8fb3d8); // the track
+      screenG.rect(mapX + Math.sin(i * 0.22) * 1.5, mapTop + i, 1, 1).fill(0x8fb3d8);
     }
-    dynamic.rect(mapX - 1, mapTop + mapH - 1, 3, 3).fill(0x5a6478); // where she set off
-    dynamic.rect(mapX - 1, mapTop - 2, 3, 3).fill(0xe8c840); // 🍺 the next pint
-    dynamic.rect(mapX, mapTop - 1, 1, 1).fill(0xf5f2e8); // its glint
+    screenG.rect(mapX - 1, mapTop + mapH - 1, 3, 3).fill(0x5a6478);
+    screenG.rect(mapX - 1, mapTop - 2, 3, 3).fill(0xe8c840);
+    screenG.rect(mapX, mapTop - 1, 1, 1).fill(0xf5f2e8);
     const hy2 = mapTop + mapH - frac * mapH;
     const hx2 = mapX + Math.sin((mapH - frac * mapH) * 0.22) * 1.5;
-    dynamic.rect(hx2 - 1, hy2 - 1, 3, 3).fill(0xc0392b); // Helen
-    dynamic.rect(hx2, hy2 - 1, 1, 1).fill(0xf2d16b); // her hat
+    screenG.rect(hx2 - 1, hy2 - 1, 3, 3).fill(0xc0392b);
+    screenG.rect(hx2, hy2 - 1, 1, 1).fill(0xf2d16b);
+  }
+
+  // ---- death scenes (screen space) ----
+  function drawSplashScene(e: number): void {
+    const s = toScreen(helenWX, helenWY);
+    const sx = Math.round(s.x);
+    const sy = Math.round(s.y);
+    if (e < 0.45) {
+      const burst = e / 0.45;
+      const core = Math.max(1, 6 * (1 - burst));
+      screenG.rect(sx - core / 2, sy - core / 2, core, core).fill(PAL.flowerWhite);
+      for (let k = 0; k < 10; k++) {
+        const a = (k / 10) * Math.PI * 2 + hash01(k) * 0.5;
+        const rr = 3 + burst * (10 + hash01(k * 3) * 8);
+        screenG.rect(sx + Math.cos(a) * rr, sy + Math.sin(a) * rr * 0.7, 1, 1).fill(
+          k % 3 === 0 ? PAL.waterGlint : PAL.flowerWhite,
+        );
+      }
+    }
+    for (let ring = 0; ring < 3; ring++) {
+      const rr = e * 26 - ring * 7;
+      if (rr < 3 || rr > 24) continue;
+      for (let k = 0; k < 14; k++) {
+        const a = (k / 14) * Math.PI * 2;
+        screenG.rect(sx + Math.cos(a) * rr, sy + Math.sin(a) * rr * 0.6, 1, 1).fill(PAL.waterRipple);
+      }
+    }
+  }
+
+  function drawCutscene(e: number): void {
+    const cx = centreX;
+    const wy = Math.round(viewH * 0.52);
+    screenG.rect(0, 0, viewW, viewH).fill(PAL.waterBase);
+    for (let y = 0; y < viewH; y += 4) {
+      const h = hash01(y * 31 + Math.floor(e * 2));
+      if (h < (y > wy ? 0.5 : 0.3)) {
+        screenG.rect(h * viewW * 1.4 - 10, y, 6 + h * 18, 1).fill(y > wy + 14 ? PAL.waterBank : PAL.waterRipple);
+      }
+    }
+    for (let ring = 0; ring < 3; ring++) {
+      const rr = 34 + ((e * 22 + ring * 16) % 48);
+      for (let k = 0; k < 22; k++) {
+        const a = (k / 22) * Math.PI * 2;
+        screenG.rect(cx + Math.cos(a) * rr, wy + Math.sin(a) * rr * 0.35, 2, 1).fill(PAL.waterRipple);
+      }
+    }
+    const bob = Math.round(Math.sin(e * 2.6));
+    const hy = wy + bob;
+    screenG.rect(cx - 20, hy - 6, 40, 6).fill(0xe8b48c);
+    for (const ex of [-13, 7]) {
+      screenG.rect(cx + ex, hy - 5, 6, 4).fill(0xf5f2e8);
+      screenG.rect(cx + ex + 1, hy - 5, 4, 3).fill(0x3f6fd6);
+      screenG.rect(cx + ex + 2, hy - 4, 2, 2).fill(0x2e2e38);
+      screenG.rect(cx + ex + 1, hy - 5, 1, 1).fill(0xffffff);
+    }
+    screenG.rect(cx - 24, hy, 48, 2).fill(PAL.waterGlint);
+    screenG.rect(cx - 42, hy - 9, 84, 2).fill(0xd9b959);
+    screenG.rect(cx - 42, hy - 12, 84, 3).fill(0xf9e29a);
+    screenG.rect(cx - 26, hy - 15, 52, 3).fill(0xc0392b);
+    screenG.rect(cx - 26, hy - 27, 52, 12).fill(0xf2d16b);
+    screenG.rect(cx - 20, hy - 31, 40, 4).fill(0xf2d16b);
+    screenG.rect(cx - 20, hy - 30, 10, 2).fill(0xf9e29a);
+    const fy = hy - 31;
+    screenG.rect(cx - 11, fy - 8, 22, 8).fill(0x5da936);
+    screenG.rect(cx - 11, fy - 1, 22, 1).fill(0x74b85c);
+    screenG.rect(cx - 14, fy - 3, 3, 3).fill(0x4c8c2b);
+    screenG.rect(cx + 11, fy - 3, 3, 3).fill(0x4c8c2b);
+    screenG.rect(cx - 5, fy - 2, 10, 1).fill(0x4c8c2b);
+    for (const ex of [-9, 3]) {
+      screenG.rect(cx + ex, fy - 13, 6, 6).fill(0x5da936);
+      const blink = (e * 2) % 3.1 < 0.25;
+      if (blink) {
+        screenG.rect(cx + ex + 1, fy - 10, 4, 1).fill(0x4c8c2b);
+      } else {
+        screenG.rect(cx + ex + 1, fy - 12, 4, 4).fill(0xf5f2e8);
+        screenG.rect(cx + ex + 2, fy - 11, 2, 2).fill(0x2e2e38);
+      }
+    }
+    for (let k = 0; k < 3; k++) {
+      const by = wy + 22 - ((e * 14 + k * 9) % 30);
+      const bx = cx - 34 + k * 30 + Math.sin(e * 3 + k * 2) * 3;
+      screenG.rect(bx, by, 2, 2).fill(PAL.waterGlint);
+    }
+  }
+
+  function drawTreeCut(e: number): void {
+    const cx = centreX;
+    screenG.rect(0, 0, viewW, viewH).fill(PAL.canopyShade);
+    for (let k = 0; k < 170; k++) {
+      const lx = hash01(k * 7) * viewW;
+      const ly = hash01(k * 11) * viewH;
+      screenG.rect(lx, ly, 2, 2).fill(
+        hash01(k * 3) < 0.5 ? PAL.canopy : hash01(k * 5) < 0.5 ? PAL.canopyLight : PAL.undergrowthDark,
+      );
+    }
+    const by = Math.round(viewH * 0.28);
+    screenG.rect(0, by, viewW, 6).fill(0x77542f);
+    screenG.rect(0, by + 2, viewW, 1).fill(0x8a6a42);
+    screenG.rect(cx - 50, by - 2, 5, 2).fill(0x77542f);
+    screenG.rect(cx + 38, by + 6, 4, 3).fill(0x77542f);
+    const swing = Math.sin(e * 1.7) * 3;
+    screenG.rect(cx - 9, by - 3, 4, 5).fill(0xe8b48c);
+    screenG.rect(cx + 5, by - 3, 4, 5).fill(0xe8b48c);
+    screenG.rect(cx - 9, by + 4, 18, 8).fill(0x35507d);
+    screenG.rect(cx - 7 + swing * 0.3, by + 12, 14, 12).fill(0xc0392b);
+    screenG.rect(cx - 11 + swing * 0.8, by + 14, 3, 13).fill(0xe8b48c);
+    screenG.rect(cx + 8 + swing * 0.8, by + 14, 3, 13).fill(0xe8b48c);
+    const hx = cx - 6 + swing;
+    screenG.rect(hx, by + 24, 12, 10).fill(0xe8b48c);
+    screenG.rect(hx + 4, by + 26, 3, 2).fill(0x8a4a2f);
+    for (const ex of [1, 7]) {
+      screenG.rect(hx + ex, by + 29, 4, 3).fill(0xf5f2e8);
+      screenG.rect(hx + ex + 1, by + 29, 2, 3).fill(0x3f6fd6);
+      screenG.rect(hx + ex + 1, by + 30, 2, 1).fill(0x2e2e38);
+    }
+    screenG.rect(hx - 1, by + 34, 14, 4).fill(0xf2d16b);
+    screenG.rect(hx + 1, by + 38, 3, 3).fill(0xf2d16b);
+    screenG.rect(hx + 8, by + 38, 3, 2).fill(0xf2d16b);
+    const hatY = Math.min(viewH - 26, by + 60 + e * 30);
+    screenG.rect(cx + 26, hatY, 30, 3).fill(0xf9e29a);
+    screenG.rect(cx + 32, hatY - 5, 18, 5).fill(0xf2d16b);
+    for (let k = 0; k < 5; k++) {
+      const ly = (e * 16 + k * 37) % (viewH + 10);
+      const lx = cx - 50 + k * 24 + Math.sin(e * 1.2 + k * 2) * 8;
+      screenG.rect(lx, ly, 2, 2).fill(PAL.canopyLight);
+    }
+    screenG.rect(cx - 44, by - 4, 4, 4).fill(0x4a4a52);
+    screenG.rect(cx - 44, by - 2, 2, 2).fill(0xd9683d);
+    screenG.rect(cx - 41, by - 4, 1, 1).fill(0x2e2e38);
+  }
+
+  function drawMudCut(e: number): void {
+    const cx = centreX;
+    const wy = Math.round(viewH * 0.58);
+    screenG.rect(0, 0, viewW, viewH).fill(PAL.ditchMud);
+    for (let y = 0; y < viewH; y += 3) {
+      const h = hash01(y * 13 + 7);
+      if (h < 0.55) {
+        screenG.rect(h * viewW * 1.6 - 20, y, 5 + h * 20, 1).fill(h < 0.28 ? 0x6f5c3a : 0x9a8458);
+      }
+    }
+    for (let k = 0; k < 26; k++) {
+      const gx = hash01(k * 17) * viewW;
+      screenG.rect(gx, hash01(k * 19) * 10, 2, 4).fill(PAL.undergrowth);
+      screenG.rect(gx, viewH - 8 - hash01(k * 23) * 6, 2, 5).fill(PAL.undergrowth);
+    }
+    screenG.rect(0, wy + 6, viewW, 16).fill(0x6f5c3a);
+    const bob = Math.round(Math.sin(e * 2) * 1);
+    const hy = wy + bob;
+    screenG.rect(cx - 16, hy - 14, 32, 20).fill(0x7a6644);
+    screenG.rect(cx - 13, hy - 18, 26, 6).fill(0x7a6644);
+    screenG.rect(cx - 10, hy - 34, 20, 17).fill(0x7a6644);
+    screenG.rect(cx - 20, hy - 38, 40, 3).fill(0xf9e29a);
+    screenG.rect(cx - 12, hy - 46, 24, 8).fill(0xf2d16b);
+    screenG.rect(cx - 6, hy - 44, 4, 3).fill(0x7a6644);
+    screenG.rect(cx + 6, hy - 38, 5, 2).fill(0x7a6644);
+    screenG.rect(cx - 16, hy - 37, 3, 2).fill(0x7a6644);
+    const blink = (e * 2.2) % 3.4 < 0.22;
+    for (const ex of [-8, 2]) {
+      if (blink) {
+        screenG.rect(cx + ex, hy - 27, 6, 1).fill(0x5a4a30);
+      } else {
+        screenG.rect(cx + ex, hy - 29, 6, 4).fill(0xf5f2e8);
+        screenG.rect(cx + ex + 1, hy - 29, 4, 3).fill(0x3f6fd6);
+        screenG.rect(cx + ex + 2, hy - 28, 2, 2).fill(0x2e2e38);
+      }
+    }
+    for (let k = 0; k < 4; k++) {
+      const dy = (e * 20 + k * 11) % 24;
+      screenG.rect(cx - 14 + k * 9, hy - 36 + dy, 1, 2).fill(0x6f5c3a);
+    }
+    const bub = (e * 0.9) % 1;
+    if (bub < 0.7) {
+      const br = 1 + bub * 3;
+      screenG.rect(cx - 30 - br / 2, hy + 10 - br / 2, br, br).fill(0x9a8458);
+    }
   }
 
   function draw(
@@ -1130,25 +1162,41 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
   ): void {
     const d = lerp(prev.d, curr.d, alpha);
 
-    // new run / view / tuning invalidates the cache
     const sig = `${viewW}x${viewH}:${p.grassStart}`;
     if (path !== chunkPath || sig !== chunkSig) {
       clearChunks();
       chunkPath = path;
       chunkSig = sig;
+      if (!worldLayer.children.includes(dynamicW)) worldLayer.addChild(dynamicW);
+      if (!worldLayer.children.includes(helen)) worldLayer.addChild(helen);
     }
 
-    // camera: integer-snapped so static pixels never land on fractions
-    worldLayer.y = Math.round(helenY + d);
+    // camera on the path point; Helen offset from it in the frame. Sub-pixel
+    // smooth: rounding a diagonal camera per-axis stair-steps visibly.
+    const cam = path.posAt(d);
+    camWX = cam.x;
+    camWY = cam.y;
+    worldLayer.x = centreX - cam.x;
+    worldLayer.y = camAnchorY - cam.y;
 
-    // ensure visible chunks exist; drop far-behind/ahead ones
-    const loIdx = Math.floor((d + helenY - viewH) / CHUNK_PX) - 1;
-    const hiIdx = Math.floor((d + helenY) / CHUNK_PX) + 1;
-    for (let idx = loIdx; idx <= hiIdx; idx++) {
-      if (!chunks.has(idx)) {
+    const worldOff = lerp(prev.x * prev.halfW, curr.x * curr.halfW, alpha);
+    const hp = fw(path, d, worldOff);
+    helenWX = hp.x;
+    helenWY = hp.y;
+
+    // ensure chunks around the camera exist (path distance window), building at
+    // most a couple per frame so scrolling never hitches on a build burst
+    const loIdx = Math.floor((d - 460) / CHUNK_PX);
+    const hiIdx = Math.floor((d + 520) / CHUNK_PX);
+    const nearIdx = Math.floor(d / CHUNK_PX);
+    let built = 0;
+    for (let span = 0; span <= Math.max(nearIdx - loIdx, hiIdx - nearIdx); span++) {
+      for (const idx of span === 0 ? [nearIdx] : [nearIdx + span, nearIdx - span]) {
+        if (idx < loIdx || idx > hiIdx || chunks.has(idx) || built >= 2) continue;
         const g = buildChunk(idx, p, path);
         chunks.set(idx, g);
-        worldLayer.addChild(g);
+        worldLayer.addChildAt(g, 0);
+        built++;
       }
     }
     for (const [idx, g] of chunks) {
@@ -1159,21 +1207,20 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       }
     }
 
-    // Helen's position first — people need it to know when to heckle.
-    // World offset is x·halfW — normalised x alone would jitter through pinches.
-    const worldOff = lerp(prev.x * prev.halfW, curr.x * curr.halfW, alpha);
-    const helenScreenX = centreX + path.centreAt(d) + worldOff;
-
-    drawDynamic(d, curr.t, path, helenScreenX);
+    screenG.clear();
+    drawDynamic(d, curr.t, path);
     drawLegMap(d);
 
-    // death cutscenes (backdrop until restart; the card sits on top): canal gets
-    // splash → frog close-up; crashes hold the frozen frame a beat, then cut
+    helen.position.set(helenWX, helenWY);
     helen.visible = true;
+    const lean = lerp(visualLean(prev, p), visualLean(curr, p), alpha);
+    helen.rotation = path.headingAt(d) + Math.max(-0.9, Math.min(0.9, lean));
+
+    // death cutscenes (screen space, over everything; the card sits on top)
     if (!curr.alive && curr.cause) {
       if (curr.cause === 'canal') {
         helen.visible = false;
-        if (deathElapsed < 0.55) drawSplashScene(deathElapsed, curr, path);
+        if (deathElapsed < 0.55) drawSplashScene(deathElapsed);
         else drawCutscene(deathElapsed);
       } else if (deathElapsed >= 0.35) {
         helen.visible = false;
@@ -1182,13 +1229,7 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       }
     }
 
-    helen.x = helenScreenX;
-    // drawn tilt IS the sampled orientation — pressing counters exactly what you see
-    const lean = lerp(visualLean(prev, p), visualLean(curr, p), alpha);
-    helen.rotation = Math.max(-0.9, Math.min(0.9, lean));
-
-    // aftermath: for ~30s after a fall Helen carries the evidence — browned by
-    // mud, darkened by canal water, or flecked green — shedding a fading trail
+    // aftermath: mud-browned / dripping / shedding leaves, fading over ~30s
     if (aftermath && aftermath.strength > 0 && curr.alive) {
       const s = aftermath.strength;
       const base =
@@ -1201,17 +1242,15 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       bike.tint = (mix(base[0]!) << 16) | (mix(base[1]!) << 8) | mix(base[2]!);
       for (let k = 0; k < 3; k++) {
         const cyc = (curr.t * (0.9 + k * 0.17) + k * 0.37) % 1;
-        if (cyc > 0.2 + 0.8 * s) continue; // the trail thins as she dries off
-        const py = helenY + 10 + cyc * 20;
+        if (cyc > 0.2 + 0.8 * s) continue;
         const jx = (hash01(Math.floor(curr.t * (2 + k)) * 13 + k * 5) - 0.5) * 12;
-        if (aftermath.cause === 'ditch') {
-          dynamic.rect(helenScreenX + jx, py, 2, 2).fill(0x7a6644); // mud clods
-        } else if (aftermath.cause === 'canal') {
-          dynamic.rect(helenScreenX + jx, py, 1, 2).fill(PAL.waterGlint); // drips
-        } else {
-          dynamic
-            .rect(helenScreenX + jx + Math.sin(cyc * 7 + k) * 3, py, 2, 2)
-            .fill(cyc > 0.5 ? PAL.canopyLight : PAL.canopy); // shed leaves
+        const T = fw(path, d - 10 - cyc * 20, worldOff + jx);
+        if (aftermath.cause === 'ditch') dynamicW.rect(T.x, T.y, 2, 2).fill(0x7a6644);
+        else if (aftermath.cause === 'canal') dynamicW.rect(T.x, T.y, 1, 2).fill(PAL.waterGlint);
+        else {
+          dynamicW
+            .rect(T.x + Math.sin(cyc * 7 + k) * 3, T.y, 2, 2)
+            .fill(cyc > 0.5 ? PAL.canopyLight : PAL.canopy);
         }
       }
     } else {

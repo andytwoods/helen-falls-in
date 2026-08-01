@@ -85,7 +85,6 @@ export function release(s: SimState): void {
 // corridor sideways under Helen), halfWidthAt (pinches closing the walls in),
 // and the collidable verge — ditch stretches and tree/bush obstacles.
 export interface PathSampler {
-  centreAt(d: number): number;
   slopeAt(d: number): number;
   halfWidthAt(d: number): number;
   ditchWidthAt(d: number): number;
@@ -214,7 +213,7 @@ export function step(s: SimState, p: Params, gaussian: () => number, path: PathS
       s.cause = 'ditch';
       return;
     }
-    const offCentrePx = path.centreAt(s.d) + s.x * w; // Helen, px from screen centre
+    const offCentrePx = s.x * w; // Helen, px from the path centreline
     if (offCentrePx < -VERGE_EDGE_PX) {
       s.alive = false;
       s.fellSide = -1;

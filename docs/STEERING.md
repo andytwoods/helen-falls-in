@@ -365,3 +365,20 @@ them, priced accordingly.
   the invisible force pushing Helen should have a visible cause.
 - Pick **one** canonical score (time or distance) for personal bests — they diverge
   once speed ramps. Display both if desired; rank by one.
+
+### True 2D meander (2026-08-01, the big one)
+
+The centreline became a genuine 2D curve: heading = ramped sum of slow sines
+peaking ≈105° — properly sideways, occasionally a touch downward. The camera
+follows the path point (north-up, Helen ~58% down the screen), the world is
+drawn as ribbon quads along the centreline in world space, and Helen's sprite
+rotates with heading + lean. THE SIM IS UNCHANGED — it always lived in the path
+frame; the meander now enters as a curvature disturbance
+(`slopeAt = curvature × FOLLOW_PX`). Tuning: FOLLOW_PX 50 → everyone died ~8s
+(sustained bends, unlike the old oscillating slope, drain bots continuously);
+24 → still 40% down; **16 restores the tuned curve** (idle 14.4s, newbie 7.2s,
+cadence 20.4s, preview 41.8/55.5s). Note the preview bots' thresholds were
+built for oscillating disturbances; humans holding through a bend (the
+long-hold skill) should do relatively better. Perf: frames cached per slice,
+chunk builds budgeted 2/frame, camera sub-pixel (per-axis rounding of a
+diagonal camera stair-steps).

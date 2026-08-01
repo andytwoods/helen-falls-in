@@ -40,7 +40,12 @@ export interface Bump {
 }
 
 export interface PathCurve {
-  centreAt(d: number): number;
+  // The centreline is a true 2D curve: heading swings well past sideways at the
+  // big bends. posAt gives world coordinates; headingAt the direction of travel
+  // (0 = up/north, positive = clockwise); slopeAt feeds the sim the equivalent
+  // curvature disturbance, so the steering model is unchanged in the path frame.
+  posAt(d: number): { x: number; y: number };
+  headingAt(d: number): number;
   slopeAt(d: number): number;
   halfWidthAt(d: number): number;
   ditchWidthAt(d: number): number;
@@ -54,12 +59,18 @@ export interface PathCurve {
   speedFactorAt(d: number): number; // 1 normally; up to downhillBoost mid-descent
 }
 
-// Amplitudes sum to 39px: with PATH_HALF_W 24 the path stays inside the 160px view.
-const COMPONENTS = [
-  { amp: 26, wavelength: 620 },
-  { amp: 10, wavelength: 260 },
-  { amp: 3, wavelength: 120 },
+// Heading meander, radians (at the default meanderAmount 0.35 after rescale):
+// peaks ≈1.8 rad ≈ 105° — properly sideways, occasionally a touch downward.
+const HEADING_COMPONENTS = [
+  { amp: 1.15, wavelength: 4200 },
+  { amp: 0.5, wavelength: 1900 },
+  { amp: 0.15, wavelength: 750 },
 ];
+const HEADING_BASE_MEANDER = 0.35; // the tuned default maps to full amplitude
+const FOLLOW_PX = 16; // curvature → sim slope-equivalent (harness-tuned)
+const SAMPLE_PX = 8; // centreline integration step
+const SAMPLE_FROM = -600;
+const SAMPLE_TO = 62000; // past Godalming with margin
 
 const RAMP_IN_PX = 450; // straight-ish opening (~5s at default speed)
 
@@ -108,12 +119,53 @@ const smooth = (t: number) => t * t * (3 - 2 * t);
 
 export function createPath(seed: number, meander: number, narrow: number, downhillBoost = 1.35): PathCurve {
   const rand = mulberry32(seed ^ 0x9e3779b9);
-  const comps = COMPONENTS.map((c) => ({
-    amp: c.amp * meander,
+  const scale = meander / HEADING_BASE_MEANDER;
+  const comps = HEADING_COMPONENTS.map((c) => ({
+    amp: c.amp * scale,
     w: (2 * Math.PI) / (c.wavelength * (0.8 + 0.4 * rand())),
     phase: rand() * 2 * Math.PI,
   }));
-  const rampIn = (d: number) => Math.min(1, d / RAMP_IN_PX);
+  const rampIn = (d: number) => Math.min(1, Math.max(0, d / RAMP_IN_PX));
+
+  const headingAt = (d: number): number =>
+    rampIn(d) * comps.reduce((sum, c) => sum + c.amp * Math.sin(c.w * d + c.phase), 0);
+  const curvatureAt = (d: number): number =>
+    rampIn(d) * comps.reduce((sum, c) => sum + c.amp * c.w * Math.cos(c.w * d + c.phase), 0);
+
+  // integrate the centreline once; posAt lerps between samples
+  const nSamples = Math.ceil((SAMPLE_TO - SAMPLE_FROM) / SAMPLE_PX) + 1;
+  const xs = new Float32Array(nSamples);
+  const ys = new Float32Array(nSamples);
+  {
+    let px = 0;
+    let py = 0;
+    // walk backwards from d=0 to the start margin, then forward
+    const i0 = Math.round(-SAMPLE_FROM / SAMPLE_PX);
+    xs[i0] = 0;
+    ys[i0] = 0;
+    for (let i = i0 - 1; i >= 0; i--) {
+      const dMid = SAMPLE_FROM + (i + 0.5) * SAMPLE_PX;
+      const th = headingAt(dMid);
+      xs[i] = xs[i + 1]! - Math.sin(th) * SAMPLE_PX;
+      ys[i] = ys[i + 1]! + Math.cos(th) * SAMPLE_PX;
+    }
+    px = 0;
+    py = 0;
+    for (let i = i0 + 1; i < nSamples; i++) {
+      const dMid = SAMPLE_FROM + (i - 0.5) * SAMPLE_PX;
+      const th = headingAt(dMid);
+      px += Math.sin(th) * SAMPLE_PX;
+      py -= Math.cos(th) * SAMPLE_PX;
+      xs[i] = px;
+      ys[i] = py;
+    }
+  }
+  const posAt = (d: number): { x: number; y: number } => {
+    const f = (Math.min(Math.max(d, SAMPLE_FROM), SAMPLE_TO - SAMPLE_PX) - SAMPLE_FROM) / SAMPLE_PX;
+    const i = Math.floor(f);
+    const t = f - i;
+    return { x: xs[i]! + (xs[i + 1]! - xs[i]!) * t, y: ys[i]! + (ys[i + 1]! - ys[i]!) * t };
+  };
 
   const nrand = mulberry32(seed ^ 0x51ed270b);
   const pinches: Pinch[] = [];
@@ -253,11 +305,10 @@ export function createPath(seed: number, meander: number, narrow: number, downhi
   }
 
   return {
-    centreAt(d) {
-      return rampIn(d) * comps.reduce((sum, c) => sum + c.amp * Math.sin(c.w * d + c.phase), 0);
-    },
+    posAt,
+    headingAt,
     slopeAt(d) {
-      return rampIn(d) * comps.reduce((sum, c) => sum + c.amp * c.w * Math.cos(c.w * d + c.phase), 0);
+      return curvatureAt(d) * FOLLOW_PX;
     },
     halfWidthAt(d) {
       return PATH_HALF_W_PX * widthFactor(d);
