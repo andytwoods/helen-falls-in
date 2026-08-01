@@ -27,6 +27,10 @@ let falls = 0;
 let startPub = 0;
 let nextPub = 1;
 
+// After a fall Helen carries the evidence for a while: mud, drips, or leaves.
+const AFTERMATH_S = 30;
+let aftermath: { cause: 'canal' | 'ditch' | 'tree' | 'bush' | 'hedge'; end: number } | null = null;
+
 const hudTime = document.getElementById('hud-time')!;
 const hudFalls = document.getElementById('hud-best')!;
 const overlay = document.getElementById('overlay')!;
@@ -75,6 +79,7 @@ function startJourney(pubIdx: number): void {
   falls = 0;
   startPub = pubIdx;
   nextPub = pubIdx + 1;
+  aftermath = null;
   telemetry.startRun();
   hudFalls.textContent = fallsText();
   intro.classList.add('hidden');
@@ -112,6 +117,7 @@ function die(): void {
 
 // Falling in is not the end: back on the bike, soggy, same spot on the towpath.
 function climbBackOn(): void {
+  aftermath = { cause: state.cause ?? 'canal', end: state.t + AFTERMATH_S };
   state.alive = true;
   state.cause = null;
   state.fellSide = 0;
@@ -202,7 +208,17 @@ async function boot(): Promise<void> {
     if (phase === 'riding') {
       hudTime.textContent = formatTime(state.t);
     }
-    renderer.draw(prevState, state, acc / DT, params, path, phase === 'dead' ? (now - cardAt) / 1000 : 0);
+    renderer.draw(
+      prevState,
+      state,
+      acc / DT,
+      params,
+      path,
+      phase === 'dead' ? (now - cardAt) / 1000 : 0,
+      aftermath && state.t < aftermath.end
+        ? { cause: aftermath.cause, strength: (aftermath.end - state.t) / AFTERMATH_S }
+        : undefined,
+    );
   });
 }
 

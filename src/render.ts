@@ -7,6 +7,7 @@
 // drawn identically by both neighbours — no seams whatever the z-order.
 
 import { Application, Container, Graphics } from 'pixi.js';
+import { audio } from './audio';
 import { PUBS } from './journey';
 import type { Params } from './params';
 import type { PathCurve } from './path';
@@ -161,8 +162,17 @@ function paintCanopy(g: Graphics, cx: number, cy: number, w: number, seedN: numb
 export interface Renderer {
   app: Application;
   // deathElapsed: wall-clock seconds since death (0 while riding) — drives the
-  // splash / frog-on-the-hat sequence when Helen goes in the canal.
-  draw(prev: SimState, curr: SimState, alpha: number, p: Params, path: PathCurve, deathElapsed?: number): void;
+  // death cutscenes. aftermath: lingering evidence of the last fall (mud/wet/
+  // leaves), strength 1→0 as it fades over ~30s.
+  draw(
+    prev: SimState,
+    curr: SimState,
+    alpha: number,
+    p: Params,
+    path: PathCurve,
+    deathElapsed?: number,
+    aftermath?: { cause: 'canal' | 'ditch' | 'tree' | 'bush' | 'hedge'; strength: number },
+  ): void;
 }
 
 export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
@@ -506,9 +516,46 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
     return g;
   }
 
+  // "Oi!" — one heckle per person per journey when Helen buzzes them. Render-
+  // side state only: never touches the sim, so replays stay exact.
+  const yells = new Map<string, number>();
+  let lastYellD = 0;
+
+  function drawOi(px: number, py: number): void {
+    const bx = Math.round(px) - 7;
+    const by = Math.round(py) - 22;
+    dynamic.rect(bx - 1, by - 1, 15, 11).fill(0x2e2e38); // border
+    dynamic.rect(bx, by, 13, 9).fill(0xf5f2e8); // bubble
+    dynamic.rect(bx + 2, by + 10, 2, 2).fill(0xf5f2e8); // tail
+    const lx = bx + 2;
+    const ly = by + 2;
+    dynamic.rect(lx, ly, 3, 1).fill(0x2e2e38); // O
+    dynamic.rect(lx, ly + 4, 3, 1).fill(0x2e2e38);
+    dynamic.rect(lx, ly + 1, 1, 3).fill(0x2e2e38);
+    dynamic.rect(lx + 2, ly + 1, 1, 3).fill(0x2e2e38);
+    dynamic.rect(lx + 4, ly, 1, 5).fill(0x2e2e38); // I
+    dynamic.rect(lx + 6, ly, 1, 3).fill(0x2e2e38); // !
+    dynamic.rect(lx + 6, ly + 4, 1, 1).fill(0x2e2e38);
+  }
+
+  function maybeYell(key: string, px: number, py: number, helenX: number, t: number, xThresh = 24): void {
+    const until = yells.get(key);
+    if (until !== undefined) {
+      if (t < until) drawOi(px, py);
+      return; // each person only bothers once
+    }
+    if (Math.abs(px - helenX) < xThresh && Math.abs(py - helenY) < 22) {
+      yells.set(key, t + 1.3);
+      audio.oi();
+      drawOi(px, py);
+    }
+  }
+
   // ---- dynamic layer: creatures + glints, cheap enough to redraw per frame ----
-  function drawDynamic(d: number, t: number, path: PathCurve): void {
+  function drawDynamic(d: number, t: number, path: PathCurve, helenX: number): void {
     dynamic.clear();
+    if (d + 300 < lastYellD) yells.clear(); // a new journey started
+    lastYellD = d;
 
     // time-shimmering glints out on the open water
     for (let y = 0; y < viewH; y += 2) {
@@ -679,6 +726,7 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       }
       dynamic.rect(ax - 14, y0 + 4, 8, 6).fill(0x5a6a4a); // tackle box
       dynamic.rect(ax - 12, y0 + 6, 4, 2).fill(0x8a9a6a); // clasp
+      maybeYell(`ang${n}`, ax, y0, helenX, t, 18);
     }
 
     // joggers, overtaken slowly: hi-vis vest, arms pumping
@@ -697,6 +745,7 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       dynamic.rect(jx - 2, jy, 6, 6).fill(jr > 0.6 ? 0x3a2e26 : 0x6a4a2f); // head
       dynamic.rect(jx - 7, jy + (ph ? -2 : 2), 2, 4).fill(0xe8b48c); // pumping arms
       dynamic.rect(jx + 5, jy + (ph ? 2 : -2), 2, 4).fill(0xe8b48c);
+      maybeYell(`jog${n}`, jx, jy, helenX, t);
     }
 
     // dog walkers, ambling: the dog out front on the lead, sniffing everything
@@ -733,6 +782,7 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       // the lead, straining back to the walker's hand
       dynamic.rect(wx + (dogx - wx) * 0.35, wy - 6 + (dogy - wy + 4) * 0.35, 2, 2).fill(0x3a3a44);
       dynamic.rect(wx + (dogx - wx) * 0.7, wy - 6 + (dogy - wy + 4) * 0.7, 2, 2).fill(0x3a3a44);
+      maybeYell(`dog${n}`, wx, wy, helenX, t);
     }
 
     // oncoming cyclists: breeze past on the other side of the path — pure
@@ -764,6 +814,7 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
           dynamic.rect(cx2 - 10 + col * 2, cy - 18 + row * 2, 2, 2).fill(STRANGER[ch]!);
         }
       }
+      maybeYell(`cyc${n}`, cx2, cy, helenX, t);
     }
 
     // a heron on the bank, rare — stands tall, flaps off as Helen approaches
@@ -1029,7 +1080,15 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
     dynamic.rect(hx2, hy2 - 1, 1, 1).fill(0xf2d16b); // her hat
   }
 
-  function draw(prev: SimState, curr: SimState, alpha: number, p: Params, path: PathCurve, deathElapsed = 0): void {
+  function draw(
+    prev: SimState,
+    curr: SimState,
+    alpha: number,
+    p: Params,
+    path: PathCurve,
+    deathElapsed = 0,
+    aftermath?: { cause: 'canal' | 'ditch' | 'tree' | 'bush' | 'hedge'; strength: number },
+  ): void {
     const d = lerp(prev.d, curr.d, alpha);
 
     // new run / view / tuning invalidates the cache
@@ -1061,7 +1120,12 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       }
     }
 
-    drawDynamic(d, curr.t, path);
+    // Helen's position first — people need it to know when to heckle.
+    // World offset is x·halfW — normalised x alone would jitter through pinches.
+    const worldOff = lerp(prev.x * prev.halfW, curr.x * curr.halfW, alpha);
+    const helenScreenX = centreX + path.centreAt(d) + worldOff;
+
+    drawDynamic(d, curr.t, path, helenScreenX);
     drawLegMap(d);
 
     // death cutscenes (backdrop until restart; the card sits on top): canal gets
@@ -1079,14 +1143,41 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       }
     }
 
-    // Helen: interpolate sim states for smooth render at any refresh rate.
-    // World offset is x·halfW — normalised x alone would jitter through pinches.
-    const worldOff = lerp(prev.x * prev.halfW, curr.x * curr.halfW, alpha);
-
-    helen.x = centreX + path.centreAt(d) + worldOff;
+    helen.x = helenScreenX;
     // drawn tilt IS the sampled orientation — pressing counters exactly what you see
     const lean = lerp(visualLean(prev, p), visualLean(curr, p), alpha);
     helen.rotation = Math.max(-0.9, Math.min(0.9, lean));
+
+    // aftermath: for ~30s after a fall Helen carries the evidence — browned by
+    // mud, darkened by canal water, or flecked green — shedding a fading trail
+    if (aftermath && aftermath.strength > 0 && curr.alive) {
+      const s = aftermath.strength;
+      const base =
+        aftermath.cause === 'ditch'
+          ? [0x8a, 0x6a, 0x44]
+          : aftermath.cause === 'canal'
+            ? [0x92, 0xaa, 0xc0]
+            : [0xa0, 0xc4, 0x88];
+      const mix = (c: number) => Math.round(c + (0xff - c) * (1 - s));
+      bike.tint = (mix(base[0]!) << 16) | (mix(base[1]!) << 8) | mix(base[2]!);
+      for (let k = 0; k < 3; k++) {
+        const cyc = (curr.t * (0.9 + k * 0.17) + k * 0.37) % 1;
+        if (cyc > 0.2 + 0.8 * s) continue; // the trail thins as she dries off
+        const py = helenY + 10 + cyc * 20;
+        const jx = (hash01(Math.floor(curr.t * (2 + k)) * 13 + k * 5) - 0.5) * 12;
+        if (aftermath.cause === 'ditch') {
+          dynamic.rect(helenScreenX + jx, py, 2, 2).fill(0x7a6644); // mud clods
+        } else if (aftermath.cause === 'canal') {
+          dynamic.rect(helenScreenX + jx, py, 1, 2).fill(PAL.waterGlint); // drips
+        } else {
+          dynamic
+            .rect(helenScreenX + jx + Math.sin(cyc * 7 + k) * 3, py, 2, 2)
+            .fill(cyc > 0.5 ? PAL.canopyLight : PAL.canopy); // shed leaves
+        }
+      }
+    } else {
+      bike.tint = 0xffffff;
+    }
   }
 
   return { app, draw };
