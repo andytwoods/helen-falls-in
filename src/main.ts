@@ -1,10 +1,10 @@
 import { audio } from './audio';
 import { attachControls } from './input';
 import { formatTime, journeyBest, PUBS, recordJourney, unlockedPub, unlockPub } from './journey';
-import { createPath, TARRASQUE_ZONE, type PathCurve } from './path';
+import { createPath, type PathCurve } from './path';
 import { DEFAULT_PARAMS } from './params';
 import { createRenderer } from './render';
-import { createState, fire, press, pressDir, release, step, DT, type SimState } from './sim';
+import { createState, press, pressDir, release, step, DT, type SimState } from './sim';
 import { gaussianFrom, mulberry32 } from './rng';
 import { Telemetry } from './telemetry';
 import { attachSoundToggle } from './ui';
@@ -20,10 +20,8 @@ let path: PathCurve = createPath(seed, params.meanderAmount, params.narrowAmount
 let state: SimState = createState();
 let prevState: SimState = { ...state };
 
-type Phase = 'intro' | 'riding' | 'dead' | 'pub' | 'done' | 'boss';
+type Phase = 'intro' | 'riding' | 'dead' | 'pub' | 'done';
 let phase: Phase = 'intro';
-let bossSeen = false;
-let bossDown = false;
 let cardAt = 0; // when the current card/cutscene began (perf.now ms)
 let falls = 0;
 let startPub = 0;
@@ -106,8 +104,6 @@ function startJourney(pubIdx: number): void {
   startPub = pubIdx;
   nextPub = pubIdx + 1;
   aftermath = null;
-  bossSeen = false;
-  bossDown = false;
   drinksEl.classList.remove('show');
   telemetry.startRun();
   updateHud();
@@ -160,7 +156,6 @@ function climbBackOn(): void {
   state.drift = 0;
   state.held = false;
   state.hold = 0;
-  state.boltD = null;
   prevState = { ...state };
   overlay.classList.remove('show');
   phase = 'riding';
@@ -223,26 +218,12 @@ async function boot(): Promise<void> {
       if (performance.now() - cardAt < TAP_LOCKOUT_S * 1000) return;
       if (phase === 'dead') climbBackOn();
       else if (phase === 'done') showIntro();
-      else if (phase === 'boss') {
-        overlay.classList.remove('show');
-        phase = 'riding';
-      }
       // 'pub' waits for a drink choice — the buttons handle it
     },
     onUp: () => {
       if (phase !== 'riding') return;
       release(state);
       telemetry.logInput(state.t, 'up');
-    },
-    onChord: () => {
-      if (phase !== 'riding' || state.boltD !== null) return;
-      const hitsBefore = state.tarrasqueHits;
-      fire(state);
-      audio.zap();
-      // a beat later, the roar if it connected with the boss
-      setTimeout(() => {
-        if (state.tarrasqueHits > hitsBefore) audio.crunch();
-      }, 400);
     },
   });
 
@@ -272,33 +253,9 @@ async function boot(): Promise<void> {
       if (phase === 'riding') {
         prevState = { ...state };
         step(state, params, gaussian, path);
-        if (
-          state.alive &&
-          (path.bumpsBetween(prevState.d, state.d).length > 0 ||
-            path.tremorKicksBetween(prevState.d, state.d).length > 0)
-        ) {
-          audio.thud();
-        }
+        if (state.alive && path.bumpsBetween(prevState.d, state.d).length > 0) audio.thud();
         if (!state.alive) die();
         else if (state.d >= PUBS[nextPub]!.d) arriveAtPub();
-        else if (!bossSeen && state.d >= path.tarrasqueD() - TARRASQUE_ZONE - 140) {
-          bossSeen = true;
-          phase = 'boss';
-          cardAt = performance.now();
-          showCard(
-            '⚔️ <b>BOSS FIGHT!</b><br>THE TARRASQUE stalks the far bank.<br><br>' +
-              'Squeeze <b>BOTH sides at once</b> to fire bolts.<br>It will take a few.<br><br>tap to face it',
-            300,
-          );
-        } else if (!bossDown && state.tarrasqueHits >= 5) {
-          bossDown = true;
-          audio.bell();
-          overlayText.innerHTML = '🎉 <b>TARRASQUE VANQUISHED!</b><br>The vale is quiet again.';
-          overlay.classList.add('show');
-          setTimeout(() => {
-            if (phase === 'riding') overlay.classList.remove('show');
-          }, 2200);
-        }
       }
       acc -= DT;
     }

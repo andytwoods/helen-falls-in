@@ -72,14 +72,7 @@ export interface PathCurve {
   // crossing the surface — each root is a small bump-like kick.
   rootTreesNear(d0: number, d1: number): Array<{ d: number; seed: number }>;
   rootKicksBetween(d0: number, d1: number): Bump[];
-  // THE TARRASQUE. It is beyond the far bank on the final leg. It is not
-  // interested in you, which is the only reason you are alive. Its footsteps
-  // shake the towpath (tremor kicks) for TARRASQUE_ZONE px either side.
-  tarrasqueD(): number;
-  tremorKicksBetween(d0: number, d1: number): Bump[];
 }
-
-export const TARRASQUE_ZONE = 900;
 
 // The towpath gets busier (and stranger) as Godalming nears.
 export const PEOPLE_SOLID_START = 22000; // from The New Inn, Send
@@ -309,14 +302,6 @@ export function createPath(seed: number, meander: number, narrow: number, downhi
     }
   }
 
-  const ttrand = mulberry32(seed ^ 0x082efa98);
-  const tarrasqueLoc = 47500 + ttrand() * 3500; // deep in the final leg
-  const tremors: Bump[] = [];
-  for (let td = tarrasqueLoc - TARRASQUE_ZONE; td <= tarrasqueLoc + TARRASQUE_ZONE; td += 72) {
-    const closeness = 1 - Math.abs(td - tarrasqueLoc) / TARRASQUE_ZONE;
-    tremors.push({ d: td, kick: (Math.round(td / 72) % 2 ? 1 : -1) * (0.3 + 0.35 * closeness) });
-  }
-
   const rtrand = mulberry32(seed ^ 0x452821e6);
   const rootTrees: Array<{ d: number; seed: number }> = [];
   const rootKicks: Bump[] = [];
@@ -496,16 +481,6 @@ export function createPath(seed: number, meander: number, narrow: number, downhi
       const out: Array<{ meetD: number; side: number }> = [];
       for (let i = lastAtOrBefore(meets, d0, (m) => m.meetD) + 1; i < meets.length && meets[i]!.meetD <= d1; i++) {
         out.push(meets[i]!);
-      }
-      return out;
-    },
-    tarrasqueD() {
-      return tarrasqueLoc;
-    },
-    tremorKicksBetween(d0, d1) {
-      const out: Bump[] = [];
-      for (let i = lastAtOrBefore(tremors, d0, (b) => b.d) + 1; i < tremors.length && tremors[i]!.d <= d1; i++) {
-        out.push(tremors[i]!);
       }
       return out;
     },

@@ -30,13 +30,6 @@ export interface SimState {
   halfW: number; // current corridor half-width, px — x is normalised to this
   speedFactor: number; // 1 normally; >1 mid-downhill
   booze: number; // cocktails minus lemonades: wobble scales with it, plus a weave
-  boltD: number | null; // a magic bolt in flight (both inputs squeezed at once)
-  boltLat: number; // its frozen lateral line, px
-  boltAge: number;
-  shotSnaps: number[]; // croc snap-points the bolt has defused
-  shotPoo: number[]; // incoming deliveries the bolt has intercepted
-  tarrasqueHits: number; // bolts landed on the boss; at 5 it is vanquished
-  boltBossHit: boolean; // this bolt already counted against the boss
 }
 
 // canal: fell in the water (right). croc: pulled in (late journey). The rest
@@ -48,8 +41,6 @@ export function createState(): SimState {
     x: 0, vx: 0, steer: 0, dir: 1, hold: 0, held: false,
     noise: 0, drift: 0, t: 0, d: 0, alive: true, fellSide: 0, cause: null, lastReleaseT: -1e9,
     halfW: PATH_HALF_W_PX, speedFactor: 1, booze: 0,
-    boltD: null, boltLat: 0, boltAge: 0, shotSnaps: [], shotPoo: [],
-    tarrasqueHits: 0, boltBossHit: false,
   };
 }
 
@@ -94,16 +85,6 @@ export function pressDir(s: SimState, dir: -1 | 1): void {
   s.held = true;
 }
 
-// FIRE: both inputs squeezed at once. The bolt flies up the path on Helen's
-// current lateral line and defuses whatever menace it reaches first.
-export function fire(s: SimState): void {
-  if (s.boltD !== null) return; // one bolt in the air at a time
-  s.boltD = s.d + 24;
-  s.boltLat = s.x * s.halfW;
-  s.boltAge = 0;
-  s.boltBossHit = false;
-}
-
 export function release(s: SimState): void {
   s.held = false;
   s.lastReleaseT = s.t;
@@ -125,8 +106,6 @@ export interface PathSampler {
   peopleMeetsBetween(d0: number, d1: number): Array<{ meetD: number; side: number }>;
   pooImpactsBetween(d0: number, d1: number): Array<{ d: number; lat: number; dir: number }>;
   rootKicksBetween(d0: number, d1: number): Array<{ d: number; kick: number }>;
-  tremorKicksBetween(d0: number, d1: number): Array<{ d: number; kick: number }>;
-  tarrasqueD(): number;
 }
 
 // waterside fraction of the path a lunging croc's jaws sweep (see path.ts)
@@ -209,13 +188,8 @@ export function step(s: SimState, p: Params, gaussian: () => number, path: PathS
   s.vx += a * dt;
 
   // Bumps: crossing a rumble strip jolts the slide and knocks the lean.
-  // Tree roots are the same physics in quick succession; Tarrasque footsteps
-  // are the same physics at geological scale.
-  for (const bump of [
-    ...path.bumpsBetween(dPrev, s.d),
-    ...path.rootKicksBetween(dPrev, s.d),
-    ...(s.tarrasqueHits >= 5 ? [] : path.tremorKicksBetween(dPrev, s.d)), // a slain boss stamps no more
-  ]) {
+  // Tree roots across the path are the same physics in quick succession.
+  for (const bump of [...path.bumpsBetween(dPrev, s.d), ...path.rootKicksBetween(dPrev, s.d)]) {
     const kick = bump.kick * p.bumpKick;
     s.vx += kick * widthScale;
     s.steer = Math.max(-1, Math.min(1, s.steer + kick * 0.13));
@@ -237,7 +211,6 @@ export function step(s: SimState, p: Params, gaussian: () => number, path: PathS
   // deep-journey: incoming from the far bank — a hit scrambles the steering.
   // Rude, not fatal.
   for (const poo of path.pooImpactsBetween(dPrev, s.d)) {
-    if (s.shotPoo.includes(poo.d)) continue; // intercepted mid-air
     if (Math.abs(s.x - poo.lat) * w < 9) {
       s.vx += poo.dir * 1.1 * widthScale;
       s.steer = Math.max(-1, Math.min(1, s.steer + poo.dir * 0.18));
@@ -247,37 +220,9 @@ export function step(s: SimState, p: Params, gaussian: () => number, path: PathS
   s.vx *= Math.exp(-p.lateralDrag * dt);
   s.x += (s.vx - (path.slopeAt(s.d) * speed) / w) * dt;
 
-  // the magic bolt, in flight: defuses croc snaps and incoming deliveries
-  if (s.boltD !== null) {
-    const bPrev = s.boltD;
-    s.boltD += (speed + 240) * dt;
-    s.boltAge += dt;
-    for (const snap of path.crocSnapsBetween(bPrev, s.boltD)) {
-      s.shotSnaps.push(snap);
-      if (s.shotSnaps.length > 8) s.shotSnaps.shift();
-    }
-    for (const imp of path.pooImpactsBetween(bPrev, s.boltD)) {
-      s.shotPoo.push(imp.d);
-      if (s.shotPoo.length > 8) s.shotPoo.shift();
-    }
-    // a bolt fired within the Tarrasque's zone lands on the Tarrasque
-    if (
-      s.boltD !== null &&
-      !s.boltBossHit &&
-      s.tarrasqueHits < 5 &&
-      s.boltAge > 0.35 &&
-      Math.abs(s.d - path.tarrasqueD()) < 900
-    ) {
-      s.boltBossHit = true;
-      s.tarrasqueHits++;
-      s.boltD = null;
-    }
-    if (s.boltD !== null && (s.boltAge > 1.4 || s.boltD > s.d + 420)) s.boltD = null;
-  }
-
   // late-journey: a lunging croc's jaws sweep the waterside half of the path
   for (const snap of path.crocSnapsBetween(dPrev, s.d)) {
-    if (s.shotSnaps.includes(snap)) continue; // zapped: it thought better of it
+    void snap;
     if (s.x > CROC_REACH_X) {
       s.alive = false;
       s.fellSide = 1;

@@ -9,33 +9,22 @@ export interface ControlHandlers {
   // dir: -1 lean left, +1 lean right, 0 = auto-sample (legacy one-button)
   onDown: (dir: -1 | 0 | 1) => void;
   onUp: () => void;
-  // both directions held at once (two thumbs / both arrows): FIRE
-  onChord?: () => void;
 }
 
 export function attachControls(surface: HTMLElement, handlers: ControlHandlers): void {
   const active: Array<{ id: string; dir: -1 | 0 | 1 }> = [];
-
-  let chordArmed = true;
 
   const push = (id: string, dir: -1 | 0 | 1) => {
     const i = active.findIndex((a) => a.id === id);
     if (i >= 0) active.splice(i, 1);
     active.push({ id, dir });
     handlers.onDown(dir);
-    const hasL = active.some((a) => a.dir === -1);
-    const hasR = active.some((a) => a.dir === 1);
-    if (hasL && hasR && chordArmed) {
-      chordArmed = false; // one shot per squeeze
-      handlers.onChord?.();
-    }
   };
   const pop = (id: string) => {
     const i = active.findIndex((a) => a.id === id);
     if (i < 0) return;
     const wasTop = i === active.length - 1;
     active.splice(i, 1);
-    chordArmed = true;
     if (active.length === 0) handlers.onUp();
     else if (wasTop) handlers.onDown(active[active.length - 1]!.dir); // fall back
   };

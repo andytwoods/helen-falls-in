@@ -1213,62 +1213,6 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       }
     }
 
-    // THE TARRASQUE (final leg): beyond the far bank — indifferent until bolted
-    {
-      const TD = path.tarrasqueD();
-      const slain = curr.tarrasqueHits >= 5;
-      if (Math.abs(TD - d) < viewH + 260) {
-        const B = fw(path, TD, farBankLat(TD) + 62);
-        const sway = slain ? 0 : Math.sin(t * 0.5) * 5;
-        // carapace dome
-        for (let i = 0; i < 44; i++) {
-          const dy = i - 22 + 0.5;
-          const half = Math.sqrt(Math.max(0, 484 - dy * dy));
-          if (half < 1) continue;
-          dynamicW.rect(B.x - half, B.y + dy, half * 2, 1).fill(i % 6 === 0 ? 0x55462c : 0x6d5a3a);
-        }
-        // spike ring
-        for (let k = 0; k < 9; k++) {
-          const a = (k / 9) * Math.PI * 2 + 0.3;
-          const sx2 = B.x + Math.cos(a) * 17;
-          const sy2 = B.y + Math.sin(a) * 17;
-          dynamicW.rect(sx2 - 1, sy2 - 1, 3, 3).fill(0x8a7a5a);
-          dynamicW.rect(sx2, sy2 - 2, 1, 1).fill(0xa89a78);
-        }
-        // head on a thick neck, swaying over the water, eye aglow
-        const hx2 = B.x - 30 + sway * 0.4;
-        const hy3 = B.y + 4 + sway + (slain ? 8 : 0); // slumped when slain
-        dynamicW.rect(hx2 + 8, hy3 - 1, 14, 6).fill(0x6d5a3a); // neck
-        dynamicW.rect(hx2 - 4, hy3 - 4, 14, 11).fill(0x6d5a3a); // head
-        dynamicW.rect(hx2 - 6, hy3 - 1, 4, 5).fill(0x5a4a30); // snout
-        dynamicW.rect(hx2 - 2, hy3 - 7, 2, 4).fill(0x8a7a5a); // horns
-        dynamicW.rect(hx2 + 4, hy3 - 8, 2, 5).fill(0x8a7a5a);
-        const blink2 = Math.floor(t * 0.9) % 7 === 0;
-        if (!slain && !blink2) dynamicW.rect(hx2, hy3 - 2, 3, 2).fill(0xffb03a); // the eye
-        if (slain) dynamicW.rect(hx2, hy3 - 2, 3, 1).fill(0x2e2e38); // x_x
-        dynamicW.rect(hx2 - 5, hy3 + 2, 2, 1).fill(0x2e2e38); // nostril
-        // bolt wounds, scorched into the carapace
-        for (let k = 0; k < Math.min(5, curr.tarrasqueHits); k++) {
-          const wx2 = B.x - 12 + hash01(k * 91) * 24;
-          const wy2 = B.y - 10 + hash01(k * 97) * 20;
-          dynamicW.rect(wx2, wy2, 3, 3).fill(0xd94f3d);
-          dynamicW.rect(wx2 + 1, wy2 + 1, 1, 1).fill(0xffe08a);
-        }
-      }
-    }
-
-    // the magic bolt, mid-flight
-    if (curr.boltD !== null) {
-      const B = fw(path, curr.boltD, curr.boltLat);
-      const flick = Math.floor(t * 24) % 2 === 0;
-      dynamicW.rect(B.x - 1, B.y - 3, 3, 6).fill(0xffe08a); // core
-      dynamicW.rect(B.x - 2, B.y - 1, 5, 2).fill(flick ? 0xd94f3d : 0x9679c9); // crackle
-      const T1 = fw(path, curr.boltD - 8, curr.boltLat);
-      const T2 = fw(path, curr.boltD - 15, curr.boltLat);
-      dynamicW.rect(T1.x, T1.y, 2, 2).fill(0xf9e29a); // trail
-      dynamicW.rect(T2.x, T2.y, 1, 1).fill(0xd9b959);
-    }
-
     // the very rare snake: a wiggling green dart across the path, gone in a blink
     for (let n = Math.floor((d - 100) / 12000); n <= Math.floor((d + 300) / 12000) + 1; n++) {
       const sr = hash01(n * 163 + 29);
@@ -1521,15 +1465,6 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
     const hp = fw(path, d, worldOff);
     helenWX = hp.x;
     helenWY = hp.y;
-
-    // Tarrasque footsteps shake the whole world — until it is dealt with
-    const relT = Math.abs(path.tarrasqueD() - d);
-    if (relT < 900 && curr.alive && curr.tarrasqueHits < 5) {
-      const ph2 = (d % 72) / 72;
-      const pulse = Math.max(0, 1 - ph2 * 5) * (1 - relT / 900);
-      worldLayer.y += Math.round(pulse * 3) * (Math.floor(d / 72) % 2 ? 1 : -1);
-      worldLayer.x += Math.round(pulse * 1.5);
-    }
 
     // ensure chunks around the camera exist (path distance window), building at
     // most a couple per frame so scrolling never hitches on a build burst
