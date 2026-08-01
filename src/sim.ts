@@ -31,10 +31,9 @@ export interface SimState {
   speedFactor: number; // 1 normally; >1 mid-downhill
 }
 
-// canal: fell in the water (right). croc: pulled in (late journey). person:
-// bowled over a bystander (they stop dodging late journey). The rest are verge
-// deaths (left): ridable but v. choppy, and hitting anything on it is fatal.
-export type DeathCause = 'canal' | 'ditch' | 'tree' | 'bush' | 'hedge' | 'croc' | 'person' | null;
+// canal: fell in the water (right). croc: pulled in (late journey). The rest
+// are verge deaths (left): ridable but v. choppy, hitting anything is fatal.
+export type DeathCause = 'canal' | 'ditch' | 'tree' | 'bush' | 'hedge' | 'croc' | null;
 
 export function createState(): SimState {
   return {
@@ -101,8 +100,6 @@ export interface PathSampler {
 
 // waterside fraction of the path a lunging croc's jaws sweep (see path.ts)
 const CROC_REACH_X = 0.4;
-// half-width of a solid bystander plus a shoulder's worth of grace, px
-const PERSON_HIT_PX = 7;
 
 // Collision margins, px: the wheel's contact half-width, and how much smaller an
 // obstacle's hitbox is than its drawn blob (canopy overhang shouldn't kill).
@@ -217,14 +214,15 @@ export function step(s: SimState, p: Params, gaussian: () => number, path: PathS
       return;
     }
   }
-  // late-journey: bystanders no longer dodge — drawing level with one at their
-  // lateral line is a crash
+  // late-journey: bystanders no longer dodge — drawing level with one, Helen
+  // swerves dramatically around them instead. Nobody collides; where the
+  // swerve flings her is her problem.
   for (const m of path.peopleMeetsBetween(dPrev, s.d)) {
-    if (Math.abs(s.x - m.side) * w < PERSON_HIT_PX + WHEEL_HALF_PX) {
-      s.alive = false;
-      s.fellSide = 0;
-      s.cause = 'person';
-      return;
+    const gap = s.x - m.side;
+    if (Math.abs(gap) * w < 16) {
+      const away = Math.sign(gap) || (m.side > 0 ? -1 : 1);
+      s.vx = away * Math.max(Math.abs(s.vx), 2.0 * widthScale);
+      s.steer = Math.max(-1, Math.min(1, s.steer + away * 0.3));
     }
   }
 

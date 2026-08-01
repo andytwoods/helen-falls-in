@@ -112,7 +112,6 @@ function die(): void {
     bush: '<b>CRASH!</b> 🌿<br>Helen tangled into a bush.',
     hedge: '<b>CRUNCH!</b> 🌿<br>Helen ploughed into the hedge.',
     croc: '<b>SNAP!</b> 🐊<br>Something scaly pulled Helen in.<br>In SURREY?!',
-    person: '<b>OOF!</b> 🚑<br>Helen bowled over a bystander.<br>Everyone apologised repeatedly.',
   }[cause];
   showCard(`${fell}<br><br>${fallsText()} &nbsp;·&nbsp; ${formatTime(state.t)}<br><br>tap to climb back on`, 900);
 }
@@ -120,11 +119,8 @@ function die(): void {
 // Falling in is not the end: back on the bike, soggy, same spot on the towpath.
 function climbBackOn(): void {
   const cause = state.cause ?? 'canal';
-  // a croc dunking leaves her soaked; flattening a jogger leaves no residue
-  aftermath =
-    cause === 'person'
-      ? null
-      : { cause: cause === 'croc' ? 'canal' : cause, end: state.t + AFTERMATH_S };
+  // a croc dunking leaves her soaked, same as the canal proper
+  aftermath = { cause: cause === 'croc' ? 'canal' : cause, end: state.t + AFTERMATH_S };
   state.alive = true;
   state.cause = null;
   state.fellSide = 0;

@@ -1100,23 +1100,48 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       }
     }
 
-    // the heron: stands on the bank, flaps off as Helen approaches
+    // the heron: stands on the bank, and when Helen gets close it flaps a short
+    // arc out over the canal and settles ON THE WATER — it's a waterbird, it
+    // does not emigrate
     for (let n = Math.floor(DLO / 1400) - 1; n <= Math.floor(DHI / 1400) + 2; n++) {
       const hr = hash01(n * 71 + 6);
       if (hr < 0.6) continue;
       const dObj = n * 1400 + hr * 300;
       const dist = dObj - d;
       if (dist < -300 || dist > viewH + 20) continue;
-      const flight = Math.max(0, Math.min(1, (90 - dist) / 140));
-      const P = fw(path, dObj, path.halfWidthAt(dObj) + 6 + flight * 45);
-      const hy = P.y - flight * flight * 220;
+      const hwH = path.halfWidthAt(dObj);
+      const bankLat = hwH + 6;
+      const waterLat = (hwH + farBankLat(dObj)) / 2 + (hash01(n * 73) - 0.5) * 16;
+      let lat: number;
+      let lift = 0;
+      let afloat = false;
+      if (dist > 90) {
+        lat = bankLat; // stood fishing, minding its own business
+      } else if (dist > 10) {
+        const u = (90 - dist) / 80;
+        const e = u * u * (3 - 2 * u);
+        lat = bankLat + (waterLat - bankLat) * e;
+        lift = Math.sin(u * Math.PI) * 22;
+      } else {
+        lat = waterLat;
+        afloat = true;
+      }
+      const P = fw(path, dObj, lat);
+      const hy = P.y - lift + (afloat ? Math.round(Math.sin(t * 1.6 + n)) : 0);
       if (!visible(P.x, hy)) continue;
-      dynamicW.rect(P.x, hy - 6, 2, 6).fill(0x9aa8b5);
-      dynamicW.rect(P.x + 1, hy - 7, 3, 2).fill(0x9aa8b5);
-      dynamicW.rect(P.x + 4, hy - 7, 2, 1).fill(PAL.flowerYellow);
-      const flap = flight > 0 && Math.floor(t * 8) % 2 === 0;
-      dynamicW.rect(P.x - (flap ? 4 : 2), hy - 1, flap ? 10 : 6, 2).fill(0x8494a3);
-      if (flight < 0.2) dynamicW.rect(P.x, hy + 1, 1, 4).fill(0x4a4a52);
+      dynamicW.rect(P.x, hy - 6, 2, 6).fill(0x9aa8b5); // neck
+      dynamicW.rect(P.x + 1, hy - 7, 3, 2).fill(0x9aa8b5); // head
+      dynamicW.rect(P.x + 4, hy - 7, 2, 1).fill(PAL.flowerYellow); // beak
+      const flap = lift > 1 && Math.floor(t * 8) % 2 === 0;
+      dynamicW.rect(P.x - (flap ? 4 : 2), hy - 1, flap ? 10 : 6, 2).fill(0x8494a3); // wings/body
+      if (dist > 90) dynamicW.rect(P.x, hy + 1, 1, 4).fill(0x4a4a52); // legs on the bank
+      if (afloat && dist > -40) {
+        const rr = 3 + ((10 - dist) / 50) * 6; // settling-down ripple
+        for (let k = 0; k < 8; k++) {
+          const a = (k / 8) * Math.PI * 2;
+          dynamicW.rect(P.x + 1 + Math.cos(a) * rr, hy + Math.sin(a) * rr * 0.5, 1, 1).fill(PAL.waterRipple);
+        }
+      }
     }
 
     // the gorilla (deep journey): a far-bank resident with an arm and a grudge
@@ -1453,9 +1478,8 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
     shadowC.position.set(helenWX + 2.5, helenWY + 2.5); // world-fixed sun, down-right
     shadowC.rotation = helen.rotation;
 
-    // death cutscenes (screen space, over everything; the card sits on top).
-    // 'person' gets no scene: the frozen tableau of the crash IS the scene.
-    if (!curr.alive && curr.cause && curr.cause !== 'person') {
+    // death cutscenes (screen space, over everything; the card sits on top)
+    if (!curr.alive && curr.cause) {
       if (curr.cause === 'canal' || curr.cause === 'croc') {
         helen.visible = false;
         if (deathElapsed < 0.55) drawSplashScene(deathElapsed);
