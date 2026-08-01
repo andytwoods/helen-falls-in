@@ -96,6 +96,7 @@ export interface PathSampler {
   speedFactorAt(d: number): number;
   crocSnapsBetween(d0: number, d1: number): number[];
   peopleMeetsBetween(d0: number, d1: number): Array<{ meetD: number; side: number }>;
+  pooImpactsBetween(d0: number, d1: number): Array<{ d: number; lat: number; dir: number }>;
 }
 
 // waterside fraction of the path a lunging croc's jaws sweep (see path.ts)
@@ -191,6 +192,15 @@ export function step(s: SimState, p: Params, gaussian: () => number, path: PathS
         const dir = Math.sign(helenPx - rockPx) || 1;
         s.vx = dir * Math.max(Math.abs(s.vx), p.rockKick * widthScale);
       }
+    }
+  }
+
+  // deep-journey: incoming from the far bank — a hit scrambles the steering.
+  // Rude, not fatal.
+  for (const poo of path.pooImpactsBetween(dPrev, s.d)) {
+    if (Math.abs(s.x - poo.lat) * w < 9) {
+      s.vx += poo.dir * 1.1 * widthScale;
+      s.steer = Math.max(-1, Math.min(1, s.steer + poo.dir * 0.18));
     }
   }
 

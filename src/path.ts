@@ -64,11 +64,16 @@ export interface PathCurve {
   crocsNear(d0: number, d1: number): Array<{ d: number }>;
   crocSnapsBetween(d0: number, d1: number): number[];
   peopleMeetsBetween(d0: number, d1: number): Array<{ meetD: number; side: number }>;
+  // Deep-journey: a gorilla on the far bank lobs one at a seeded landing spot.
+  // A hit wobbles (dir = kick direction) — rude, not fatal.
+  gorillasNear(d0: number, d1: number): Array<{ d: number; impactD: number; lat: number; dir: number }>;
+  pooImpactsBetween(d0: number, d1: number): Array<{ d: number; lat: number; dir: number }>;
 }
 
 // The towpath gets busier (and stranger) as Godalming nears.
 export const PEOPLE_SOLID_START = 22000; // from The New Inn, Send
 export const CROC_START_PX = 30000; // shortly before Guildford. Yes, really.
+export const GORILLA_START_PX = 36000; // past Guildford it gets personal
 export const CROC_SNAP_BACK = 15; // snap happens this far before the croc's d
 export const CROC_REACH_X = 0.4; // waterside fraction of the path its jaws sweep
 
@@ -293,6 +298,18 @@ export function createPath(seed: number, meander: number, narrow: number, downhi
     }
   }
 
+  const grand2 = mulberry32(seed ^ 0x1f83d9ab);
+  const gorillas: Array<{ d: number; impactD: number; lat: number; dir: number }> = [];
+  {
+    let c = GORILLA_START_PX;
+    while (c < SAMPLE_TO - 2000) {
+      c += 2200 + grand2() * 1800;
+      const lat = (grand2() * 2 - 1) * 0.5;
+      const dir = grand2() > 0.5 ? 1 : -1;
+      if (!nearPub(c, 150)) gorillas.push({ d: c, impactD: c - 40, lat, dir });
+    }
+  }
+
   // Bystander meets — the SAME hash lattice the renderer draws people from, so
   // the person you hit is exactly the person you saw. Only solid-era meets.
   const meets: Array<{ meetD: number; side: number }> = [];
@@ -434,6 +451,21 @@ export function createPath(seed: number, meander: number, narrow: number, downhi
       const out: Array<{ meetD: number; side: number }> = [];
       for (let i = lastAtOrBefore(meets, d0, (m) => m.meetD) + 1; i < meets.length && meets[i]!.meetD <= d1; i++) {
         out.push(meets[i]!);
+      }
+      return out;
+    },
+    gorillasNear(d0, d1) {
+      const out: typeof gorillas = [];
+      for (let i = lastAtOrBefore(gorillas, d0, (g2) => g2.d) + 1; i < gorillas.length && gorillas[i]!.d <= d1; i++) {
+        out.push(gorillas[i]!);
+      }
+      return out;
+    },
+    pooImpactsBetween(d0, d1) {
+      const out: Array<{ d: number; lat: number; dir: number }> = [];
+      for (const g2 of gorillas) {
+        if (g2.impactD > d0 && g2.impactD <= d1) out.push({ d: g2.impactD, lat: g2.lat, dir: g2.dir });
+        if (g2.impactD > d1) break;
       }
       return out;
     },

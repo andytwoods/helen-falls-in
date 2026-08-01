@@ -88,19 +88,20 @@ const HELEN_MAP = [
   '..BBssHHHHHHssBB..',
   '.......rrrr.......',
   '......YYYYYY......',
-  '....YYyyyyyyYY....',
+  '....YyyyyyyyY....'.padEnd(18, '.'),
   '...YyyyyyyyyyyY...',
   '..YyyyyyyyyyyyyY..',
-  '..YyyyyYYyyyyyyY..',
+  '..YyyYYyyyyyyyyY..',
+  '..YyyyyyyyyyyyyY..',
+  '..YyyyyyyyyyyyyY..',
+  '..YyyyyyyyyyyyyY..',
   '..YyyyyyyyyyyyyY..',
   '...YyyyyyyyyyyY...',
-  '....YYyyyyyyYY....',
+  '....YyyyyyyyY....'.padEnd(18, '.'),
   '......YYYYYY......',
   '.......rRrr.......',
-  '.......rrrr.......',
   '.......bbbb.......',
   '........bb........',
-  '........HH........',
   '........HH........',
   '........TT........',
   '........TT........',
@@ -325,6 +326,10 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
   const rag = (D: number) =>
     Math.sin(D * 0.013) * 4 + Math.sin(D * 0.041) * 2 + (hash01(Math.floor(D / 2) * 3) - 0.5) * 2;
 
+  // the canal's far bank wanders — broad here, tighter there — but the water
+  // never narrows below ~60px (six Helens abreast)
+  const farBankLat = (D: number) => 100 + Math.sin(D * 0.0021 + 1.3) * 10 + Math.sin(D * 0.00047) * 6;
+
   // A canalside pub: building axis-aligned at its anchor, garden furniture and
   // spur laid out along the path frame.
   function paintPub(g: Graphics, path: PathCurve, pubD: number): void {
@@ -412,9 +417,17 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
           quadF(g, f0, f1,-halfW - DITCH_GAP_PX - ditchW + 1, -halfW - DITCH_GAP_PX - 1, PAL.ditchWater);
         }
       }
-      // canal
-      quadF(g, f0, f1,halfW, 250, PAL.waterBase);
-      quadF(g, f0, f1,halfW, halfW + 1.5, PAL.waterBank);
+      // canal (variable width), then the far bank: thick pathless woodland
+      const fb = farBankLat(D);
+      quadF(g, f0, f1, halfW, fb, PAL.waterBase);
+      quadF(g, f0, f1, halfW, halfW + 1.5, PAL.waterBank);
+      quadF(g, f0, f1, fb + rag(D + 7000) * 0.6, 260, PAL.undergrowth);
+      quadF(g, f0, f1, fb - 0.5, fb + 1, PAL.waterBank);
+      const fh2 = hash01(rowSlot * 23 + 400);
+      if (fh2 < 0.4) {
+        const P = fw(path, D + 1, fb + 6 + fh2 * 350);
+        g.rect(P.x, P.y, 2 + fh2 * 5, 1).fill(fh2 < 0.2 ? PAL.undergrowthDark : PAL.undergrowthLight);
+      }
       // towpath + fringes
       quadF(g, f0, f1,-halfW, halfW, PAL.pathSand);
       quadF(g, f0, f1,-halfW, -halfW + fringeW, PAL.fringe);
@@ -539,6 +552,9 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       if (wD < lo || wD > hi) continue;
       const P = fw(path, wD, -70 - hash01(n * 103) * 150);
       paintCanopy(g, P.x, P.y, 12 + wr * 8, n * 7 + 3);
+      // and the mirror wood on the far bank
+      const Q = fw(path, wD + 7, farBankLat(wD) + 9 + hash01(n * 127) * 140);
+      paintCanopy(g, Q.x, Q.y, 11 + wr * 8, n * 11 + 5);
     }
 
     // lily pads
@@ -686,7 +702,8 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
     for (let n = Math.floor(DLO / 10); n <= Math.ceil(DHI / 10); n++) {
       const gh = hash01(n * 3 + Math.floor(t * 2));
       if (gh < 0.2) {
-        const P = fw(path, n * 10, path.halfWidthAt(n * 10) + 10 + gh * 160);
+        const hw10 = path.halfWidthAt(n * 10);
+        const P = fw(path, n * 10, Math.min(hw10 + 10 + gh * 60, farBankLat(n * 10) - 5));
         if (visible(P.x, P.y)) dynamicW.rect(P.x, P.y, 3, 1).fill(PAL.waterGlint);
       }
     }
@@ -755,7 +772,7 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       const fr = hash01(n * 73 + 19);
       if (fr < 0.5) continue;
       const fD = n * 150 + fr * 60;
-      const lat = path.halfWidthAt(fD) + 16 + hash01(n * 77) * 70;
+      const lat = Math.min(path.halfWidthAt(fD) + 16 + hash01(n * 77) * 70, farBankLat(fD) - 7);
       const P = fw(path, fD + Math.sin(t * 0.4 + fr * 9) * 10, lat + Math.sin(t * 0.27 + fr * 4) * 6);
       if (!visible(P.x, P.y)) continue;
       const jump = fr > 0.78 ? (t * 0.11 + fr * 5) % 1 : 1; // some fish are show-offs
@@ -784,7 +801,7 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       const rr = hash01(n * 151 + 7);
       if (rr < 0.55) continue;
       const bD = n * 2800 + rr * 500 - t * 6; // gliding gently the other way
-      const P = fw(path, bD, path.halfWidthAt(bD) + 30 + hash01(n * 157) * 45);
+      const P = fw(path, bD, Math.min(path.halfWidthAt(bD) + 30 + hash01(n * 157) * 45, farBankLat(bD) - 12));
       if (!visible(P.x, P.y)) continue;
       dynamicW.rect(P.x - 2, P.y - 7, 4, 14).fill(0x8a6a42); // hull
       dynamicW.rect(P.x - 1, P.y - 9, 2, 2).fill(0x8a6a42); // bow
@@ -855,7 +872,11 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       const dr = hash01(n * 67 + 8);
       if (dr < 0.5) continue;
       const dD = n * 240 + dr * 90;
-      const P = fw(path, dD, path.halfWidthAt(dD) + 26 + Math.sin(t * 0.35 + dr * 8) * 8 + dr * 24);
+      const P = fw(
+        path,
+        dD,
+        Math.min(path.halfWidthAt(dD) + 26 + Math.sin(t * 0.35 + dr * 8) * 8 + dr * 24, farBankLat(dD) - 9),
+      );
       if (!visible(P.x, P.y)) continue;
       const moorhen = dr > 0.85;
       dynamicW.rect(P.x, P.y, 3, 2).fill(moorhen ? 0x3a3a44 : 0x9a8a68);
@@ -1087,6 +1108,72 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       const flap = flight > 0 && Math.floor(t * 8) % 2 === 0;
       dynamicW.rect(P.x - (flap ? 4 : 2), hy - 1, flap ? 10 : 6, 2).fill(0x8494a3);
       if (flight < 0.2) dynamicW.rect(P.x, hy + 1, 1, 4).fill(0x4a4a52);
+    }
+
+    // the gorilla (deep journey): a far-bank resident with an arm and a grudge
+    for (const gor of path.gorillasNear(d - 200, d + 320)) {
+      const rel = gor.d - d;
+      const G = fw(path, gor.d, farBankLat(gor.d) + 10);
+      const winding = rel <= 150 && rel > 40;
+      if (visible(G.x, G.y)) {
+        const beat = !winding && Math.floor(t * 2.5 + gor.d) % 6 === 0;
+        dynamicW.rect(G.x - 4, G.y - 4, 9, 10).fill(0x3a322c); // bulk
+        dynamicW.rect(G.x - 3, G.y - 8, 7, 5).fill(0x3a322c); // head
+        dynamicW.rect(G.x - 2, G.y - 6, 5, 3).fill(0x5a4c42); // face
+        dynamicW.rect(G.x - 2, G.y - 6, 1, 1).fill(0x2e2e38); // eyes
+        dynamicW.rect(G.x + 1, G.y - 6, 1, 1).fill(0x2e2e38);
+        if (winding) {
+          dynamicW.rect(G.x - 7, G.y - 11, 3, 9).fill(0x3a322c); // arm up, loaded
+          dynamicW.rect(G.x - 7, G.y - 12, 3, 2).fill(0x6b4a2a); // the payload
+          dynamicW.rect(G.x + 5, G.y - 1, 3, 6).fill(0x3a322c);
+        } else if (beat) {
+          dynamicW.rect(G.x - 7, G.y - 6, 3, 6).fill(0x3a322c); // chest-beating
+          dynamicW.rect(G.x + 5, G.y - 6, 3, 6).fill(0x3a322c);
+        } else {
+          dynamicW.rect(G.x - 7, G.y - 1, 3, 7).fill(0x3a322c); // knuckles down
+          dynamicW.rect(G.x + 5, G.y - 1, 3, 7).fill(0x3a322c);
+        }
+      }
+      if (winding && !yells.has(`gor${gor.d}`)) {
+        yells.set(`gor${gor.d}`, { until: t + 1.4, text: 'OOK OOK!' });
+      }
+      drawYell(`gor${gor.d}`, G.x, G.y, t);
+      // the projectile: launched at rel 130, arriving exactly as Helen does
+      if (rel <= 130 && rel > 40) {
+        const u = (130 - rel) / 90;
+        const I = fw(path, gor.impactD, gor.lat * path.halfWidthAt(gor.impactD));
+        const px2 = G.x + (I.x - G.x) * u;
+        const py2 = G.y + (I.y - G.y) * u - Math.sin(u * Math.PI) * 30;
+        dynamicW.rect(px2 - 1, py2 - 1, 3, 2).fill(0x6b4a2a);
+        dynamicW.rect(px2, py2 - 2, 1, 1).fill(0x54381e);
+      } else if (rel <= 40 && rel > -170) {
+        const I = fw(path, gor.impactD, gor.lat * path.halfWidthAt(gor.impactD));
+        if (visible(I.x, I.y)) {
+          dynamicW.rect(I.x - 2, I.y - 1, 5, 3).fill(0x6b4a2a); // the splat
+          dynamicW.rect(I.x - 3, I.y, 1, 1).fill(0x6b4a2a);
+          dynamicW.rect(I.x + 3, I.y - 2, 1, 1).fill(0x6b4a2a);
+          dynamicW.rect(I.x, I.y, 2, 1).fill(0x54381e);
+        }
+      }
+    }
+
+    // the very rare snake: a wiggling green dart across the path, gone in a blink
+    for (let n = Math.floor((d - 100) / 12000); n <= Math.floor((d + 300) / 12000) + 1; n++) {
+      const sr = hash01(n * 163 + 29);
+      if (sr < 0.55) continue;
+      const sD = n * 12000 + 800 + sr * 9000;
+      if (sD < 1500) continue;
+      const rel = sD - d;
+      if (rel > 60 || rel < 15) continue;
+      const u = (60 - rel) / 45;
+      const hwS = path.halfWidthAt(sD);
+      const headLat = -hwS - 10 + u * (2 * hwS + 20);
+      for (let k = 0; k < 7; k++) {
+        const lat2 = headLat - k * 3;
+        if (lat2 < -hwS - 12) continue;
+        const S = fw(path, sD + Math.sin(u * 20 + k * 1.6) * 1.5, lat2);
+        dynamicW.rect(S.x, S.y, 2, 2).fill(k === 0 ? 0x4a7a2e : k % 2 ? 0x5a8a3a : 0x3f6626);
+      }
     }
   }
 
