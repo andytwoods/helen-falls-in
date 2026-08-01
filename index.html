@@ -45,9 +45,9 @@
       position: fixed;
       inset: 0;
       display: none;
-      align-items: center;
+      align-items: flex-end; /* the card sits low, clear of Helen in the cutscenes */
       justify-content: center;
-      background: rgba(20, 45, 80, 0.45); /* light enough to see the frog scene behind */
+      padding-bottom: calc(9vh + env(safe-area-inset-bottom));
       color: #fff;
       text-align: center;
       font-size: 15px;
@@ -56,6 +56,11 @@
       text-shadow: 1px 1px 0 #000;
     }
     #overlay.show { display: flex; }
+    #overlay-text {
+      background: rgba(15, 25, 40, 0.6);
+      padding: 12px 18px;
+      border-radius: 8px;
+    }
     #sound-toggle {
       position: fixed;
       bottom: calc(10px + env(safe-area-inset-bottom));

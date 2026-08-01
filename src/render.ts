@@ -544,17 +544,18 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       dynamic.rect(wx - 2, y0 + 1, 2, 1).fill(PAL.waterRipple); // wake
     }
 
-    // the stupid stork: lands IN THE ROAD ahead, waits until Helen is nearly on
-    // it, flaps lazily another hop up the path, and only clears off for good
-    // after the third time. Position is a pure function of d — replay-exact.
-    for (let n = Math.floor((d - 800) / 2200); n <= Math.floor((d + helenY) / 2200) + 1; n++) {
+    // the stupid stork: a rare treat (roughly every few minutes of riding) that
+    // lands IN THE ROAD ahead, waits until Helen is nearly on it, flaps lazily
+    // another hop up the path, and only clears off for good after the third
+    // time. Position is a pure function of d — replay-exact.
+    for (let n = Math.floor((d - 800) / 9000); n <= Math.floor((d + helenY) / 9000) + 1; n++) {
       const sr = hash01(n * 79 + 3);
-      if (sr < 0.45) continue;
+      if (sr < 0.35) continue;
       const TRIG = 105; // how close Helen gets before it deigns to move
       const FLY = 70; // px of Helen-travel per unhurried hop
       const hop1 = 170 + hash01(n * 83 + 1) * 60;
       const hop2 = 170 + hash01(n * 83 + 2) * 60;
-      const sits = [n * 2200 + 900 + sr * 300, 0, 0];
+      const sits = [n * 9000 + 1200 + sr * 5000, 0, 0];
       sits[1] = sits[0]! + hop1;
       sits[2] = sits[1]! + hop2;
       let birdD: number;
@@ -596,6 +597,60 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
         dynamic.rect(sx - 2, sy - 5, 2, 2).fill(0xf0ece0); // head
         const peer = Math.floor(t * 2 + sr * 9) % 4 === 0 ? 1 : 0; // peers about
         dynamic.rect(sx - 3 - peer, sy - 4, 2, 1).fill(0xe8a13d); // beak
+      }
+    }
+
+    // anglers on the bank: sat at the water's edge, rod out over the canal,
+    // float bobbing — occasionally the rod twitches (nothing is ever caught)
+    for (let n = Math.floor((d + helenY - viewH) / 1700) - 1; n <= Math.floor((d + helenY) / 1700) + 1; n++) {
+      const ar = hash01(n * 91 + 5);
+      if (ar < 0.5) continue;
+      const aD = n * 1700 + ar * 400;
+      const y0 = helenY - (aD - d);
+      if (y0 < -10 || y0 > viewH + 10) continue;
+      const bank = centreX + path.centreAt(aD) + path.halfWidthAt(aD);
+      const ax = bank - 3;
+      const twitch = (t * 0.5 + ar * 7) % 5 < 0.3 ? 1 : 0;
+      dynamic.rect(ax - 2, y0 - 2, 4, 4).fill(ar > 0.75 ? 0x6d7a8c : 0x7a5c48); // jacket
+      dynamic.rect(ax - 1, y0 - 5, 3, 3).fill(0xe8b48c); // head
+      dynamic.rect(ax - 2, y0 - 6, 4, 2).fill(0x4a4a52); // flat cap
+      dynamic.rect(ax + 2, y0 + 1, 3, 2).fill(0x3a3a44); // legs to the water
+      for (let i = 0; i < 8; i++) {
+        dynamic.rect(ax + 3 + i, y0 - 3 - Math.round(i * 0.5) + (i > 4 ? twitch : 0), 1, 1).fill(0x8a6a42); // rod
+      }
+      const floatX = ax + 14;
+      const floatY = y0 + 2 + Math.round(Math.sin(t * 1.4 + ar * 9)) + twitch;
+      dynamic.rect(floatX, y0 - 6 + twitch, 1, floatY - (y0 - 6)).fill(0xcfd8e0); // line
+      dynamic.rect(floatX, floatY, 1, 2).fill(PAL.flowerRed); // float
+      dynamic.rect(ax - 5, y0 + 1, 3, 2).fill(0x5a6a4a); // tackle box
+    }
+
+    // oncoming cyclists: breeze past on the other side of the path — pure
+    // scenery, no collision (moving-obstacle fairness is a v1.5 question)
+    for (let n = Math.floor(d / 2600) - 1; n <= Math.floor((d + helenY) / 2600) + 2; n++) {
+      const cr = hash01(n * 97 + 13);
+      if (cr < 0.5) continue;
+      const event = n * 2600 + cr * 300;
+      const rel = 520 - 2.6 * (d - event); // closes at Helen-speed + their speed
+      if (rel < -80 || rel > viewH + 60) continue;
+      const cy = helenY - rel;
+      const cD = d + rel;
+      const side = cr > 0.75 ? 0.45 : -0.45;
+      const cx2 = centreX + path.centreAt(cD) + side * path.halfWidthAt(cD) + Math.sin(t * 3 + cr * 9) * 1.5;
+      // Helen's sprite flipped to ride the other way, in a stranger's colours
+      const STRANGER: Record<string, number> = {
+        ...HELEN_PX,
+        y: 0x3a6d8c, Y: 0x4a7da0, // cap, not a sunhat
+        r: 0x2e6d4f, R: 0x265a41, // green jacket
+        b: 0x6a4a2f, // brown shorts
+      };
+      for (let row = 0; row < HELEN_MAP.length; row++) {
+        const line = HELEN_MAP[HELEN_MAP.length - 1 - row]!;
+        for (let col = 0; col < line.length; col++) {
+          const ch = line[col]!;
+          if (ch === '.') continue;
+          dynamic.rect(cx2 - 10 + col * 2, cy - 18 + row * 2, 2, 2).fill(STRANGER[ch]!);
+        }
       }
     }
 
