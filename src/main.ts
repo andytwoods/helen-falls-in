@@ -102,7 +102,7 @@ function die(): void {
   hudFalls.textContent = fallsText();
   const cause = state.cause ?? 'canal';
   telemetry.endRun(seed, state.t, cause, params);
-  if (cause === 'canal') audio.splash();
+  if (cause === 'canal' || cause === 'croc') audio.splash();
   else if (cause === 'ditch') audio.squelch();
   else audio.crunch();
   const fell = {
@@ -111,13 +111,20 @@ function die(): void {
     tree: '<b>THUNK!</b> 🌳<br>Helen rode straight into a tree.',
     bush: '<b>CRASH!</b> 🌿<br>Helen tangled into a bush.',
     hedge: '<b>CRUNCH!</b> 🌿<br>Helen ploughed into the hedge.',
+    croc: '<b>SNAP!</b> 🐊<br>Something scaly pulled Helen in.<br>In SURREY?!',
+    person: '<b>OOF!</b> 🚑<br>Helen bowled over a bystander.<br>Everyone apologised repeatedly.',
   }[cause];
   showCard(`${fell}<br><br>${fallsText()} &nbsp;·&nbsp; ${formatTime(state.t)}<br><br>tap to climb back on`, 900);
 }
 
 // Falling in is not the end: back on the bike, soggy, same spot on the towpath.
 function climbBackOn(): void {
-  aftermath = { cause: state.cause ?? 'canal', end: state.t + AFTERMATH_S };
+  const cause = state.cause ?? 'canal';
+  // a croc dunking leaves her soaked; flattening a jogger leaves no residue
+  aftermath =
+    cause === 'person'
+      ? null
+      : { cause: cause === 'croc' ? 'canal' : cause, end: state.t + AFTERMATH_S };
   state.alive = true;
   state.cause = null;
   state.fellSide = 0;

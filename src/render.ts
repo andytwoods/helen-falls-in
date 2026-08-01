@@ -13,7 +13,8 @@
 import { Application, Container, Graphics } from 'pixi.js';
 import { PUBS } from './journey';
 import type { Params } from './params';
-import type { PathCurve } from './path';
+import { CROC_SNAP_BACK, PEOPLE_SOLID_START, type PathCurve } from './path';
+import { hash01 } from './rng';
 import { DITCH_GAP_PX, visualLean, type SimState } from './sim';
 
 export const BASE_W = 160;
@@ -76,25 +77,37 @@ const HELEN_PX: Record<string, number> = {
   Y: 0xf9e29a, // sunhat brim/highlight
   b: 0x35507d, // shorts
 };
+// Authored at final resolution (1px cells, drawn at scale 1) — rotating chunky
+// scaled-up blocks through the bends is what read as "blocky".
 const HELEN_MAP = [
-  '....T....',
-  '....T....',
-  '....T....',
-  'BBssHssBB',
-  '...rrr...',
-  '..YYYYY..',
-  '.YyyyyyY.',
-  '.YyyYyyY.',
-  '.YyyyyyY.',
-  '..YYYYY..',
-  '...rRr...',
-  '...bbb...',
-  '....H....',
-  '....H....',
-  '....T....',
-  '....T....',
-  '....T....',
-  '....T....',
+  '........TT........',
+  '........TT........',
+  '........TT........',
+  '........TT........',
+  '........HH........',
+  '..BBssHHHHHHssBB..',
+  '.......rrrr.......',
+  '......YYYYYY......',
+  '....YYyyyyyyYY....',
+  '...YyyyyyyyyyyY...',
+  '..YyyyyyyyyyyyyY..',
+  '..YyyyyYYyyyyyyY..',
+  '..YyyyyyyyyyyyyY..',
+  '...YyyyyyyyyyyY...',
+  '....YYyyyyyyYY....',
+  '......YYYYYY......',
+  '.......rRrr.......',
+  '.......rrrr.......',
+  '.......bbbb.......',
+  '........bb........',
+  '........HH........',
+  '........HH........',
+  '........TT........',
+  '........TT........',
+  '........TT........',
+  '........TT........',
+  '........TT........',
+  '........TT........',
 ];
 
 function paintSprite(g: Graphics, map: string[], px: Record<string, number>, ox: number, oy: number): void {
@@ -151,9 +164,6 @@ function paintPixelText(g: Graphics, text: string, x: number, y: number, colour:
     cx += 4;
   }
 }
-
-// deterministic integer hash → [0,1)
-const hash01 = (n: number) => (Math.imul(n ^ 0x9e3779b9, 2654435761) >>> 0) / 4294967296;
 
 // A tree seen from directly above: a lumpy diffuse disc of foliage — rotation-
 // invariant, so it works at any path heading.
@@ -223,14 +233,13 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
 
   const helen = new Container();
   const shadow = new Graphics();
-  shadow.rect(-3, 5, 6, 3).fill({ color: 0x000000, alpha: 0.18 });
-  shadow.rect(-2, 4, 4, 5).fill({ color: 0x000000, alpha: 0.1 });
+  shadow.rect(-6, 10, 12, 6).fill({ color: 0x000000, alpha: 0.18 });
+  shadow.rect(-4, 8, 8, 10).fill({ color: 0x000000, alpha: 0.1 });
   const bike = new Graphics();
-  paintSprite(bike, HELEN_MAP, HELEN_BODY_PX, -4.5, -9);
+  paintSprite(bike, HELEN_MAP, HELEN_BODY_PX, -9, -14);
   const hat = new Graphics();
-  paintSprite(hat, HELEN_MAP, HELEN_HAT_PX, -4.5, -9);
+  paintSprite(hat, HELEN_MAP, HELEN_HAT_PX, -9, -14);
   helen.addChild(shadow, bike, hat);
-  helen.scale.set(2);
 
   let viewW = BASE_W;
   let viewH = BASE_H;
@@ -730,6 +739,106 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       if (Math.floor(t * 12) % 2 === 0) dynamicW.rect(P.x + 1, P.y - 1, 1, 1).fill(0xa8e8ea);
     }
 
+    // fish: dark shapes cruising just under the surface; the odd one jumps
+    for (let n = Math.floor(DLO / 150) - 1; n <= Math.floor(DHI / 150) + 1; n++) {
+      const fr = hash01(n * 73 + 19);
+      if (fr < 0.5) continue;
+      const fD = n * 150 + fr * 60;
+      const lat = path.halfWidthAt(fD) + 16 + hash01(n * 77) * 70;
+      const P = fw(path, fD + Math.sin(t * 0.4 + fr * 9) * 10, lat + Math.sin(t * 0.27 + fr * 4) * 6);
+      if (!visible(P.x, P.y)) continue;
+      const jump = fr > 0.78 ? (t * 0.11 + fr * 5) % 1 : 1; // some fish are show-offs
+      if (jump < 0.09) {
+        const jp = jump / 0.09; // the leap: out, arc, back in
+        const h = Math.sin(jp * Math.PI) * 9;
+        dynamicW.rect(P.x - 2, P.y - h - 1, 4, 2).fill(0xc8d4dc); // silver body
+        dynamicW.rect(P.x + (jp < 0.5 ? -3 : 3), P.y - h, 1, 1).fill(0x9aa8b4); // tail
+        dynamicW.rect(P.x, P.y - h - 2, 1, 1).fill(0xe8f0f4); // glisten
+        if (jp < 0.25 || jp > 0.75) {
+          const rr = 3 + (jp < 0.25 ? jp / 0.25 : (jp - 0.75) / 0.25) * 5;
+          for (let k = 0; k < 8; k++) {
+            const a = (k / 8) * Math.PI * 2;
+            dynamicW.rect(P.x + Math.cos(a) * rr, P.y + Math.sin(a) * rr * 0.5, 1, 1).fill(PAL.waterRipple);
+          }
+        }
+      } else {
+        // subsurface shadow, tail sculling
+        dynamicW.rect(P.x - 2, P.y, 5, 2).fill(0x3f6f9e);
+        dynamicW.rect(P.x + (Math.floor(t * 3 + n) % 2 ? 3 : 4), P.y, 1, 2).fill(0x3f6f9e);
+      }
+    }
+
+    // the occasional rower, sculling along mid-canal, oars sweeping
+    for (let n = Math.floor((DLO + t * 6) / 2800) - 1; n <= Math.floor((DHI + t * 6) / 2800) + 1; n++) {
+      const rr = hash01(n * 151 + 7);
+      if (rr < 0.55) continue;
+      const bD = n * 2800 + rr * 500 - t * 6; // gliding gently the other way
+      const P = fw(path, bD, path.halfWidthAt(bD) + 30 + hash01(n * 157) * 45);
+      if (!visible(P.x, P.y)) continue;
+      dynamicW.rect(P.x - 2, P.y - 7, 4, 14).fill(0x8a6a42); // hull
+      dynamicW.rect(P.x - 1, P.y - 9, 2, 2).fill(0x8a6a42); // bow
+      dynamicW.rect(P.x - 1, P.y + 7, 2, 2).fill(0x8a6a42); // stern
+      dynamicW.rect(P.x - 1, P.y - 5, 2, 10).fill(0xa5825a); // thwarts
+      dynamicW.rect(P.x - 2, P.y - 2, 4, 4).fill(0x6d8caa); // rower
+      dynamicW.rect(P.x - 1, P.y - 4, 2, 2).fill(0xe8b48c); // head
+      const ph = Math.sin(t * 2.2 + rr * 7);
+      dynamicW.rect(P.x - 9, P.y - 1 + ph * 3, 7, 1).fill(0x8a6a42); // oars
+      dynamicW.rect(P.x + 2, P.y - 1 - ph * 3, 7, 1).fill(0x8a6a42);
+      if (Math.abs(ph) > 0.85) {
+        dynamicW.rect(P.x - 10, P.y - 1 + ph * 3, 2, 1).fill(PAL.waterGlint); // catch
+        dynamicW.rect(P.x + 8, P.y - 1 - ph * 3, 2, 1).fill(PAL.waterGlint);
+      }
+      dynamicW.rect(P.x - 1, P.y + 10, 2, 1).fill(PAL.waterRipple); // wake
+      dynamicW.rect(P.x, P.y + 13, 1, 1).fill(PAL.waterRipple);
+    }
+
+    // crocodiles (late journey): eyes lurking off the bank, then the lunge —
+    // drawn as a pure function of d, exactly matching the sim's snap point
+    for (const croc of path.crocsNear(d - 80, d + 280)) {
+      const rel = croc.d - d;
+      const halfW = path.halfWidthAt(croc.d);
+      const lurkLat = halfW + 12;
+      if (rel > 70) {
+        const P = fw(path, croc.d, lurkLat);
+        if (!visible(P.x, P.y)) continue;
+        if (Math.floor(t * 1.3 + croc.d) % 5 !== 0) {
+          dynamicW.rect(P.x - 3, P.y - 1, 2, 2).fill(0x4c6c2b); // eyes above water
+          dynamicW.rect(P.x + 1, P.y - 1, 2, 2).fill(0x4c6c2b);
+          dynamicW.rect(P.x - 3, P.y - 1, 1, 1).fill(0xe8c840);
+          dynamicW.rect(P.x + 1, P.y - 1, 1, 1).fill(0xe8c840);
+        }
+        if ((t * 0.7 + croc.d) % 4 < 0.4) dynamicW.rect(P.x - 5, P.y + 2, 10, 1).fill(PAL.waterRipple);
+      } else if (rel > -CROC_SNAP_BACK - 50) {
+        // the lunge (q→1 at the snap), then the slide back under
+        const q =
+          rel > -CROC_SNAP_BACK
+            ? (70 - rel) / (70 + CROC_SNAP_BACK)
+            : 1 - (-CROC_SNAP_BACK - rel) / 50;
+        const snoutLat = lurkLat + (halfW * 0.35 - lurkLat) * Math.max(0, Math.min(1, q));
+        for (let k = 4; k >= 0; k--) {
+          const seg = fw(path, croc.d, snoutLat + 4 + k * 4.5);
+          const w2 = k === 2 ? 6 : 5 - Math.abs(k - 2);
+          dynamicW.rect(seg.x - w2 / 2, seg.y - 2, w2, 4).fill(k % 2 ? 0x46632a : 0x5a7a33);
+        }
+        const S = fw(path, croc.d, snoutLat);
+        dynamicW.rect(S.x - 2, S.y - 2, 4, 4).fill(0x5a7a33); // snout
+        const gape = rel > -CROC_SNAP_BACK ? 2 + q * 2 : 2;
+        dynamicW.rect(S.x - 2 - gape, S.y - 2, 2, 2).fill(0x3d5524); // jaws, agape
+        dynamicW.rect(S.x - 2 - gape, S.y + 1, 2, 2).fill(0x3d5524);
+        dynamicW.rect(S.x - 1 - gape, S.y - 1, 1, 1).fill(0xf5f2e8); // teeth
+        dynamicW.rect(S.x - 1 - gape, S.y + 1, 1, 1).fill(0xf5f2e8);
+        dynamicW.rect(S.x - 1, S.y - 3, 1, 1).fill(0xe8c840); // eye
+        if (rel < -CROC_SNAP_BACK + 10) {
+          const B = fw(path, croc.d, halfW + 6);
+          const rr2 = 3 + ((-CROC_SNAP_BACK - rel + 10) / 60) * 8;
+          for (let k = 0; k < 8; k++) {
+            const a = (k / 8) * Math.PI * 2;
+            dynamicW.rect(B.x + Math.cos(a) * rr2, B.y + Math.sin(a) * rr2 * 0.5, 1, 1).fill(PAL.waterRipple);
+          }
+        }
+      }
+    }
+
     // ducks & moorhens
     for (let n = Math.floor(DLO / 240) - 1; n <= Math.floor(DHI / 240) + 1; n++) {
       const dr = hash01(n * 67 + 8);
@@ -787,7 +896,14 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       const rel = 420 - 0.61 * (d - event);
       if (rel < -80 || rel > viewH + 40) continue;
       const jD = d + rel;
-      const st = startle(`jog${n}`, jD, (jr > 0.77 ? 0.6 : -0.6) * path.halfWidthAt(jD), t, hash01(n * 137), path);
+      const baseLat = (jr > 0.77 ? 0.6 : -0.6) * path.halfWidthAt(jD);
+      // late journey they hold their ground — YOU swerve. They do warn you.
+      const solid = event + 420 / 0.61 >= PEOPLE_SOLID_START;
+      let st = { lat: baseLat, landed: false, dir: 0 };
+      if (!solid) st = startle(`jog${n}`, jD, baseLat, t, hash01(n * 137), path);
+      else if (!yells.has(`jog${n}`) && rel > 10 && rel < 120) {
+        yells.set(`jog${n}`, { until: t + 1.6, text: hash01(n * 137) > 0.6 ? 'OI!' : "LOOK WHERE YOU'RE GOING!" });
+      }
       const P = fw(path, jD, st.lat);
       if (!visible(P.x, P.y)) continue;
       const entry = dodges.get(`jog${n}`);
@@ -814,7 +930,13 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       const rel = 420 - 0.87 * (d - event);
       if (rel < -80 || rel > viewH + 50) continue;
       const wD = d + rel;
-      const st = startle(`dog${n}`, wD, (wr > 0.76 ? 0.55 : -0.55) * path.halfWidthAt(wD), t, hash01(n * 139), path);
+      const baseLat = (wr > 0.76 ? 0.55 : -0.55) * path.halfWidthAt(wD);
+      const solid = event + 420 / 0.87 >= PEOPLE_SOLID_START;
+      let st = { lat: baseLat, landed: false, dir: 0 };
+      if (!solid) st = startle(`dog${n}`, wD, baseLat, t, hash01(n * 139), path);
+      else if (!yells.has(`dog${n}`) && rel > 10 && rel < 120) {
+        yells.set(`dog${n}`, { until: t + 1.6, text: hash01(n * 139) > 0.5 ? 'OI!' : 'BLOODY CYCLISTS!' });
+      }
       const P = fw(path, wD, st.lat);
       if (!visible(P.x, P.y)) continue;
       const coat = wr > 0.7 ? 0x8c5a7a : 0x5a6d8c;
@@ -873,13 +995,18 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
         for (let col = 0; col < line.length; col++) {
           const ch = line[col]!;
           if (ch === '.') continue;
-          dynamicW.rect(P.x - 9 + col * 2, P.y - 18 + row * 2, 2, 2).fill(STRANGER[ch]!);
+          dynamicW.rect(P.x - 9 + col, P.y - 14 + row, 1, 1).fill(STRANGER[ch]!);
         }
       }
       const key = `cyc${n}`;
-      if (!yells.has(key) && Math.abs(P.x - helenWX) < 24 && Math.abs(P.y - helenWY) < 22) {
-        const text = cr > 0.8 ? "LOOK WHERE YOU'RE GOING!" : 'OI!';
-        yells.set(key, { until: t + (text.length > 5 ? 2 : 1.3), text });
+      const solid = event + 520 / 2.6 >= PEOPLE_SOLID_START;
+      if (!yells.has(key)) {
+        if (solid && rel > 10 && rel < 150) {
+          yells.set(key, { until: t + 1.6, text: 'OI!' }); // fair warning at closing speed
+        } else if (Math.abs(P.x - helenWX) < 24 && Math.abs(P.y - helenWY) < 22) {
+          const text = cr > 0.8 ? "LOOK WHERE YOU'RE GOING!" : 'OI!';
+          yells.set(key, { until: t + (text.length > 5 ? 2 : 1.3), text });
+        }
       }
       drawYell(key, P.x, P.y, t);
     }
@@ -1216,9 +1343,10 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
     const lean = lerp(visualLean(prev, p), visualLean(curr, p), alpha);
     helen.rotation = path.headingAt(d) + Math.max(-0.9, Math.min(0.9, lean));
 
-    // death cutscenes (screen space, over everything; the card sits on top)
-    if (!curr.alive && curr.cause) {
-      if (curr.cause === 'canal') {
+    // death cutscenes (screen space, over everything; the card sits on top).
+    // 'person' gets no scene: the frozen tableau of the crash IS the scene.
+    if (!curr.alive && curr.cause && curr.cause !== 'person') {
+      if (curr.cause === 'canal' || curr.cause === 'croc') {
         helen.visible = false;
         if (deathElapsed < 0.55) drawSplashScene(deathElapsed);
         else drawCutscene(deathElapsed);

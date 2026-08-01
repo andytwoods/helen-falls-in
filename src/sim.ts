@@ -31,9 +31,10 @@ export interface SimState {
   speedFactor: number; // 1 normally; >1 mid-downhill
 }
 
-// canal: fell in the water (right). The rest are verge deaths (left): the verge
-// is ridable but v. choppy, and hitting anything on it is fatal.
-export type DeathCause = 'canal' | 'ditch' | 'tree' | 'bush' | 'hedge' | null;
+// canal: fell in the water (right). croc: pulled in (late journey). person:
+// bowled over a bystander (they stop dodging late journey). The rest are verge
+// deaths (left): ridable but v. choppy, and hitting anything on it is fatal.
+export type DeathCause = 'canal' | 'ditch' | 'tree' | 'bush' | 'hedge' | 'croc' | 'person' | null;
 
 export function createState(): SimState {
   return {
@@ -93,7 +94,14 @@ export interface PathSampler {
   bumpsBetween(d0: number, d1: number): Array<{ d: number; kick: number }>;
   rocksNear(d0: number, d1: number): Array<{ d: number; xf: number; r: number }>;
   speedFactorAt(d: number): number;
+  crocSnapsBetween(d0: number, d1: number): number[];
+  peopleMeetsBetween(d0: number, d1: number): Array<{ meetD: number; side: number }>;
 }
+
+// waterside fraction of the path a lunging croc's jaws sweep (see path.ts)
+const CROC_REACH_X = 0.4;
+// half-width of a solid bystander plus a shoulder's worth of grace, px
+const PERSON_HIT_PX = 7;
 
 // Collision margins, px: the wheel's contact half-width, and how much smaller an
 // obstacle's hitbox is than its drawn blob (canopy overhang shouldn't kill).
@@ -188,6 +196,27 @@ export function step(s: SimState, p: Params, gaussian: () => number, path: PathS
 
   s.vx *= Math.exp(-p.lateralDrag * dt);
   s.x += (s.vx - (path.slopeAt(s.d) * speed) / w) * dt;
+
+  // late-journey: a lunging croc's jaws sweep the waterside half of the path
+  for (const snap of path.crocSnapsBetween(dPrev, s.d)) {
+    void snap;
+    if (s.x > CROC_REACH_X) {
+      s.alive = false;
+      s.fellSide = 1;
+      s.cause = 'croc';
+      return;
+    }
+  }
+  // late-journey: bystanders no longer dodge — drawing level with one at their
+  // lateral line is a crash
+  for (const m of path.peopleMeetsBetween(dPrev, s.d)) {
+    if (Math.abs(s.x - m.side) * w < PERSON_HIT_PX + WHEEL_HALF_PX) {
+      s.alive = false;
+      s.fellSide = 0;
+      s.cause = 'person';
+      return;
+    }
+  }
 
   // Right edge: the canal — fatal on contact, as ever.
   if (s.x >= 1) {

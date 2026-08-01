@@ -11,6 +11,10 @@ export function mulberry32(seed: number): () => number {
   };
 }
 
+// deterministic integer hash → [0,1) — shared by path (collision positions)
+// and renderer (drawing) so the person you hit is the person you saw
+export const hash01 = (n: number): number => (Math.imul(n ^ 0x9e3779b9, 2654435761) >>> 0) / 4294967296;
+
 export function gaussianFrom(rand: () => number): () => number {
   return () => {
     let u = 0;

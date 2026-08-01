@@ -12,7 +12,7 @@
 //   from screen centre (negative = left), `w` the drawn/collidable blob width.
 
 import { PUBS } from './journey';
-import { mulberry32 } from './rng';
+import { hash01, mulberry32 } from './rng';
 import { DITCH_GAP_PX, PATH_HALF_W_PX } from './sim';
 
 // Pubs claim a clearing: no collidable scenery or ditch near them, so nothing
@@ -57,7 +57,20 @@ export interface PathCurve {
   bumpsBetween(d0: number, d1: number): Bump[];
   rocksNear(d0: number, d1: number): Rock[];
   speedFactorAt(d: number): number; // 1 normally; up to downhillBoost mid-descent
+  // Late-journey madness. Crocs lurk in the canal and lunge across the
+  // waterside half of the path; crocSnapsBetween yields the exact snap points.
+  // From PEOPLE_SOLID_START the bystanders stop dodging — peopleMeetsBetween
+  // yields where Helen draws level with one (side in x-fraction units).
+  crocsNear(d0: number, d1: number): Array<{ d: number }>;
+  crocSnapsBetween(d0: number, d1: number): number[];
+  peopleMeetsBetween(d0: number, d1: number): Array<{ meetD: number; side: number }>;
 }
+
+// The towpath gets busier (and stranger) as Godalming nears.
+export const PEOPLE_SOLID_START = 22000; // from The New Inn, Send
+export const CROC_START_PX = 30000; // shortly before Guildford. Yes, really.
+export const CROC_SNAP_BACK = 15; // snap happens this far before the croc's d
+export const CROC_REACH_X = 0.4; // waterside fraction of the path its jaws sweep
 
 // Heading meander, radians (at the default meanderAmount 0.35 after rescale):
 // peaks ≈1.8 rad ≈ 105° — properly sideways, occasionally a touch downward.
@@ -270,6 +283,47 @@ export function createPath(seed: number, meander: number, narrow: number, downhi
     }
   }
 
+  const crand = mulberry32(seed ^ 0x27d4eb2f);
+  const crocs: Array<{ d: number }> = [];
+  {
+    let c = CROC_START_PX;
+    while (c < SAMPLE_TO - 2000) {
+      c += 1600 + crand() * 1400;
+      if (widthFactor(c) > 0.95 && !nearPub(c, 200)) crocs.push({ d: c });
+    }
+  }
+
+  // Bystander meets — the SAME hash lattice the renderer draws people from, so
+  // the person you hit is exactly the person you saw. Only solid-era meets.
+  const meets: Array<{ meetD: number; side: number }> = [];
+  {
+    const pushMeet = (meetD: number, side: number) => {
+      if (meetD >= PEOPLE_SOLID_START) meets.push({ meetD, side });
+    };
+    for (let n = 0; n < Math.ceil(SAMPLE_TO / 2000) + 2; n++) {
+      const jr = hash01(n * 103 + 17);
+      if (jr < 0.55) continue;
+      const event = n * 2000 + jr * 500;
+      if (event < 600) continue;
+      pushMeet(event + 420 / 0.61, jr > 0.77 ? 0.6 : -0.6);
+    }
+    for (let n = 0; n < Math.ceil(SAMPLE_TO / 3100) + 2; n++) {
+      const wr = hash01(n * 113 + 23);
+      if (wr < 0.5) continue;
+      const event = n * 3100 + wr * 600;
+      if (event < 600) continue;
+      pushMeet(event + 420 / 0.87, wr > 0.76 ? 0.55 : -0.55);
+    }
+    for (let n = 0; n < Math.ceil(SAMPLE_TO / 2600) + 2; n++) {
+      const cr = hash01(n * 97 + 13);
+      if (cr < 0.5) continue;
+      const event = n * 2600 + cr * 300;
+      if (event < 2500) continue;
+      pushMeet(event + 520 / 2.6, cr > 0.75 ? 0.45 : -0.45);
+    }
+    meets.sort((a, b) => a.meetD - b.meetD);
+  }
+
   // index of the last entry with key(entry) <= d, or -1
   function lastAtOrBefore<T>(arr: T[], d: number, key: (e: T) => number): number {
     let lo = 0;
@@ -357,6 +411,29 @@ export function createPath(seed: number, meander: number, narrow: number, downhi
       const out: Rock[] = [];
       for (let i = lastAtOrBefore(rocks, d0, (r) => r.d) + 1; i < rocks.length && rocks[i]!.d <= d1; i++) {
         out.push(rocks[i]!);
+      }
+      return out;
+    },
+    crocsNear(d0, d1) {
+      const out: Array<{ d: number }> = [];
+      for (let i = lastAtOrBefore(crocs, d0, (c) => c.d) + 1; i < crocs.length && crocs[i]!.d <= d1; i++) {
+        out.push(crocs[i]!);
+      }
+      return out;
+    },
+    crocSnapsBetween(d0, d1) {
+      const out: number[] = [];
+      for (const c of crocs) {
+        const snap = c.d - CROC_SNAP_BACK;
+        if (snap > d0 && snap <= d1) out.push(snap);
+        if (snap > d1) break;
+      }
+      return out;
+    },
+    peopleMeetsBetween(d0, d1) {
+      const out: Array<{ meetD: number; side: number }> = [];
+      for (let i = lastAtOrBefore(meets, d0, (m) => m.meetD) + 1; i < meets.length && meets[i]!.meetD <= d1; i++) {
+        out.push(meets[i]!);
       }
       return out;
     },

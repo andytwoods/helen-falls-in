@@ -10,7 +10,7 @@ export interface InputEvent {
 export interface RunRecord {
   seed: number;
   duration: number;
-  cause: 'canal' | 'ditch' | 'tree' | 'bush' | 'hedge';
+  cause: 'canal' | 'ditch' | 'tree' | 'bush' | 'hedge' | 'croc' | 'person';
   taps: number;
   meanTapRateHz: number;
   inputs: InputEvent[];
