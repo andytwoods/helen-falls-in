@@ -232,14 +232,25 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
   app.stage.addChild(worldLayer, screenG);
 
   const helen = new Container();
-  const shadow = new Graphics();
-  shadow.rect(-6, 10, 12, 6).fill({ color: 0x000000, alpha: 0.18 });
-  shadow.rect(-4, 8, 8, 10).fill({ color: 0x000000, alpha: 0.1 });
   const bike = new Graphics();
   paintSprite(bike, HELEN_MAP, HELEN_BODY_PX, -9, -14);
   const hat = new Graphics();
   paintSprite(hat, HELEN_MAP, HELEN_HAT_PX, -9, -14);
-  helen.addChild(shadow, bike, hat);
+  helen.addChild(bike, hat);
+
+  // Helen's shadow: a silhouette of the sprite in its own container, so it can
+  // rotate WITH her while staying offset in the world-fixed sun direction
+  // (down-right, like every tree shadow) — inside the rotating container the
+  // sun would swing around as the path bends.
+  const shadowC = new Container();
+  const shadowG = new Graphics();
+  for (let row = 0; row < HELEN_MAP.length; row++) {
+    const line = HELEN_MAP[row]!;
+    for (let col = 0; col < line.length; col++) {
+      if (line[col] !== '.') shadowG.rect(col - 9, row - 14, 1, 1).fill({ color: 0x000000, alpha: 0.14 });
+    }
+  }
+  shadowC.addChild(shadowG);
 
   let viewW = BASE_W;
   let viewH = BASE_H;
@@ -1295,6 +1306,7 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       chunkPath = path;
       chunkSig = sig;
       if (!worldLayer.children.includes(dynamicW)) worldLayer.addChild(dynamicW);
+      if (!worldLayer.children.includes(shadowC)) worldLayer.addChild(shadowC);
       if (!worldLayer.children.includes(helen)) worldLayer.addChild(helen);
     }
 
@@ -1342,6 +1354,8 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
     helen.visible = true;
     const lean = lerp(visualLean(prev, p), visualLean(curr, p), alpha);
     helen.rotation = path.headingAt(d) + Math.max(-0.9, Math.min(0.9, lean));
+    shadowC.position.set(helenWX + 2.5, helenWY + 2.5); // world-fixed sun, down-right
+    shadowC.rotation = helen.rotation;
 
     // death cutscenes (screen space, over everything; the card sits on top).
     // 'person' gets no scene: the frozen tableau of the crash IS the scene.
@@ -1356,6 +1370,7 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
         else drawTreeCut(deathElapsed);
       }
     }
+    shadowC.visible = helen.visible;
 
     // aftermath: mud-browned / dripping / shedding leaves, fading over ~30s
     if (aftermath && aftermath.strength > 0 && curr.alive) {
