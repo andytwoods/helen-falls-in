@@ -717,15 +717,22 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       dynamic.rect(wx - 7, wy + (swing ? 0 : 2), 2, 4).fill(0xe8b48c); // arm swing
       const weave = Math.sin(t * 1.1 + wr * 8);
       const dogx = wx + weave * 8;
-      const dogy = wy - 20;
+      const dogy = wy - 22;
       const dogCol = wr > 0.6 ? 0x8a6a4a : 0xe8dcc8;
-      dynamic.rect(dogx - 4, dogy, 8, 6).fill(dogCol); // body
-      dynamic.rect(dogx - 2 + (weave > 0 ? 3 : -3), dogy - 4, 4, 4).fill(dogCol); // head, mid-sniff
-      dynamic.rect(dogx + 3, dogy + 5 + (Math.floor(t * 8) % 2), 2, 2).fill(dogCol); // wagging tail
-      dynamic.rect(dogx - 4, dogy + 5, 3, 1).fill(wr > 0.6 ? 0x6d523a : 0xc4b49a); // paws hint
-      // the lead, straining
-      dynamic.rect(wx + (dogx - wx) * 0.35, wy - 6 + (dogy - wy + 6) * 0.35, 2, 2).fill(0x3a3a44);
-      dynamic.rect(wx + (dogx - wx) * 0.7, wy - 6 + (dogy - wy + 6) * 0.7, 2, 2).fill(0x3a3a44);
+      const dogDark = wr > 0.6 ? 0x5a4632 : 0x9a8a72;
+      // top-down dog: long body nose-to-haunch, head out front mid-sniff,
+      // tail wagging SIDEWAYS behind
+      const headOff = weave > 0 ? 2 : -2;
+      dynamic.rect(dogx - 2, dogy - 4, 5, 9).fill(dogCol); // body
+      dynamic.rect(dogx - 1, dogy - 1, 3, 4).fill(dogDark); // saddle marking
+      dynamic.rect(dogx - 2 + headOff, dogy - 8, 5, 4).fill(dogCol); // head
+      dynamic.rect(dogx - 2 + headOff, dogy - 8, 1, 2).fill(dogDark); // ears
+      dynamic.rect(dogx + 2 + headOff, dogy - 8, 1, 2).fill(dogDark);
+      dynamic.rect(dogx + headOff, dogy - 9, 1, 1).fill(0x2e2e38); // nose
+      dynamic.rect(dogx + (Math.floor(t * 8) % 2 ? 3 : -2), dogy + 5, 2, 2).fill(dogCol); // wag
+      // the lead, straining back to the walker's hand
+      dynamic.rect(wx + (dogx - wx) * 0.35, wy - 6 + (dogy - wy + 4) * 0.35, 2, 2).fill(0x3a3a44);
+      dynamic.rect(wx + (dogx - wx) * 0.7, wy - 6 + (dogy - wy + 4) * 0.7, 2, 2).fill(0x3a3a44);
     }
 
     // oncoming cyclists: breeze past on the other side of the path — pure
