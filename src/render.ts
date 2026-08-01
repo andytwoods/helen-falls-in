@@ -681,7 +681,7 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
     const P = fw(path, D, lat);
     const entry = dodges.get(key);
     if (!entry) {
-      if (Math.abs(P.x - helenWX) < 26 && Math.abs(P.y - helenWY) < 24) {
+      if (Math.abs(P.x - helenWX) < 20 && Math.abs(P.y - helenWY) < 18) {
         const dir = lat >= 0 ? 1 : -1;
         dodges.set(key, { at: t, dir });
         const text = seed > 0.86 ? "LOOK WHERE YOU'RE GOING!" : seed > 0.68 ? 'BLOODY CYCLISTS!' : 'OI!';
@@ -715,7 +715,7 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
   }
 
   // ---- dynamic layer: wildlife + people ----
-  function drawDynamic(d: number, t: number, path: PathCurve): void {
+  function drawDynamic(d: number, t: number, path: PathCurve, curr: SimState): void {
     dynamicW.clear();
     if (d + 300 < lastYellD) {
       yells.clear();
@@ -964,7 +964,7 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       const solid = event + 420 / 0.61 >= PEOPLE_SOLID_START;
       let st = { lat: baseLat, landed: false, dir: 0 };
       if (!solid) st = startle(`jog${n}`, jD, baseLat, t, hash01(n * 137), path);
-      else if (!yells.has(`jog${n}`) && rel > 10 && rel < 120) {
+      else if (!yells.has(`jog${n}`) && rel > 10 && rel < 60) {
         yells.set(`jog${n}`, { until: t + 1.6, text: hash01(n * 137) > 0.6 ? 'OI!' : "LOOK WHERE YOU'RE GOING!" });
       }
       const P = fw(path, jD, st.lat);
@@ -997,7 +997,7 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       const solid = event + 420 / 0.87 >= PEOPLE_SOLID_START;
       let st = { lat: baseLat, landed: false, dir: 0 };
       if (!solid) st = startle(`dog${n}`, wD, baseLat, t, hash01(n * 139), path);
-      else if (!yells.has(`dog${n}`) && rel > 10 && rel < 120) {
+      else if (!yells.has(`dog${n}`) && rel > 10 && rel < 60) {
         yells.set(`dog${n}`, { until: t + 1.6, text: hash01(n * 139) > 0.5 ? 'OI!' : 'BLOODY CYCLISTS!' });
       }
       const P = fw(path, wD, st.lat);
@@ -1064,7 +1064,7 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       const key = `cyc${n}`;
       const solid = event + 520 / 2.6 >= PEOPLE_SOLID_START;
       if (!yells.has(key)) {
-        if (solid && rel > 10 && rel < 150) {
+        if (solid && rel > 10 && rel < 70) {
           yells.set(key, { until: t + 1.6, text: 'OI!' }); // fair warning at closing speed
         } else if (Math.abs(P.x - helenWX) < 24 && Math.abs(P.y - helenWY) < 22) {
           const text = cr > 0.8 ? "LOOK WHERE YOU'RE GOING!" : 'OI!';
@@ -1211,6 +1211,62 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
           dynamicW.rect(I.x, I.y, 2, 1).fill(0x54381e);
         }
       }
+    }
+
+    // THE TARRASQUE (final leg): beyond the far bank — indifferent until bolted
+    {
+      const TD = path.tarrasqueD();
+      const slain = curr.tarrasqueHits >= 5;
+      if (Math.abs(TD - d) < viewH + 260) {
+        const B = fw(path, TD, farBankLat(TD) + 62);
+        const sway = slain ? 0 : Math.sin(t * 0.5) * 5;
+        // carapace dome
+        for (let i = 0; i < 44; i++) {
+          const dy = i - 22 + 0.5;
+          const half = Math.sqrt(Math.max(0, 484 - dy * dy));
+          if (half < 1) continue;
+          dynamicW.rect(B.x - half, B.y + dy, half * 2, 1).fill(i % 6 === 0 ? 0x55462c : 0x6d5a3a);
+        }
+        // spike ring
+        for (let k = 0; k < 9; k++) {
+          const a = (k / 9) * Math.PI * 2 + 0.3;
+          const sx2 = B.x + Math.cos(a) * 17;
+          const sy2 = B.y + Math.sin(a) * 17;
+          dynamicW.rect(sx2 - 1, sy2 - 1, 3, 3).fill(0x8a7a5a);
+          dynamicW.rect(sx2, sy2 - 2, 1, 1).fill(0xa89a78);
+        }
+        // head on a thick neck, swaying over the water, eye aglow
+        const hx2 = B.x - 30 + sway * 0.4;
+        const hy3 = B.y + 4 + sway + (slain ? 8 : 0); // slumped when slain
+        dynamicW.rect(hx2 + 8, hy3 - 1, 14, 6).fill(0x6d5a3a); // neck
+        dynamicW.rect(hx2 - 4, hy3 - 4, 14, 11).fill(0x6d5a3a); // head
+        dynamicW.rect(hx2 - 6, hy3 - 1, 4, 5).fill(0x5a4a30); // snout
+        dynamicW.rect(hx2 - 2, hy3 - 7, 2, 4).fill(0x8a7a5a); // horns
+        dynamicW.rect(hx2 + 4, hy3 - 8, 2, 5).fill(0x8a7a5a);
+        const blink2 = Math.floor(t * 0.9) % 7 === 0;
+        if (!slain && !blink2) dynamicW.rect(hx2, hy3 - 2, 3, 2).fill(0xffb03a); // the eye
+        if (slain) dynamicW.rect(hx2, hy3 - 2, 3, 1).fill(0x2e2e38); // x_x
+        dynamicW.rect(hx2 - 5, hy3 + 2, 2, 1).fill(0x2e2e38); // nostril
+        // bolt wounds, scorched into the carapace
+        for (let k = 0; k < Math.min(5, curr.tarrasqueHits); k++) {
+          const wx2 = B.x - 12 + hash01(k * 91) * 24;
+          const wy2 = B.y - 10 + hash01(k * 97) * 20;
+          dynamicW.rect(wx2, wy2, 3, 3).fill(0xd94f3d);
+          dynamicW.rect(wx2 + 1, wy2 + 1, 1, 1).fill(0xffe08a);
+        }
+      }
+    }
+
+    // the magic bolt, mid-flight
+    if (curr.boltD !== null) {
+      const B = fw(path, curr.boltD, curr.boltLat);
+      const flick = Math.floor(t * 24) % 2 === 0;
+      dynamicW.rect(B.x - 1, B.y - 3, 3, 6).fill(0xffe08a); // core
+      dynamicW.rect(B.x - 2, B.y - 1, 5, 2).fill(flick ? 0xd94f3d : 0x9679c9); // crackle
+      const T1 = fw(path, curr.boltD - 8, curr.boltLat);
+      const T2 = fw(path, curr.boltD - 15, curr.boltLat);
+      dynamicW.rect(T1.x, T1.y, 2, 2).fill(0xf9e29a); // trail
+      dynamicW.rect(T2.x, T2.y, 1, 1).fill(0xd9b959);
     }
 
     // the very rare snake: a wiggling green dart across the path, gone in a blink
@@ -1466,6 +1522,15 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
     helenWX = hp.x;
     helenWY = hp.y;
 
+    // Tarrasque footsteps shake the whole world — until it is dealt with
+    const relT = Math.abs(path.tarrasqueD() - d);
+    if (relT < 900 && curr.alive && curr.tarrasqueHits < 5) {
+      const ph2 = (d % 72) / 72;
+      const pulse = Math.max(0, 1 - ph2 * 5) * (1 - relT / 900);
+      worldLayer.y += Math.round(pulse * 3) * (Math.floor(d / 72) % 2 ? 1 : -1);
+      worldLayer.x += Math.round(pulse * 1.5);
+    }
+
     // ensure chunks around the camera exist (path distance window), building at
     // most a couple per frame so scrolling never hitches on a build burst
     const loIdx = Math.floor((d - 460) / CHUNK_PX);
@@ -1490,7 +1555,7 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
     }
 
     screenG.clear();
-    drawDynamic(d, curr.t, path);
+    drawDynamic(d, curr.t, path, curr);
     drawLegMap(d);
 
     helen.position.set(helenWX, helenWY);

@@ -250,6 +250,14 @@ class GameAudio {
     const at = this.ctx.currentTime;
     this.tone(at, 110, 55, 0.09, 0.16);
   }
+
+  // the magic bolt: a bright little pew
+  zap(): void {
+    if (!this.ctx || this.ctx.state !== 'running') return;
+    const at = this.ctx.currentTime;
+    this.tone(at, 880, 220, 0.16, 0.14, 'square');
+    this.tone(at, 1320, 660, 0.1, 0.09, 'triangle');
+  }
 }
 
 export const audio = new GameAudio();
