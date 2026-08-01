@@ -7,7 +7,6 @@
 // drawn identically by both neighbours — no seams whatever the z-order.
 
 import { Application, Container, Graphics } from 'pixi.js';
-import { audio } from './audio';
 import { PUBS } from './journey';
 import type { Params } from './params';
 import type { PathCurve } from './path';
@@ -104,9 +103,54 @@ function paintSprite(g: Graphics, map: string[], px: Record<string, number>, ox:
     const line = map[row]!;
     for (let col = 0; col < line.length; col++) {
       const c = line[col]!;
-      if (c === '.') continue;
+      if (c === '.' || !(c in px)) continue;
       g.rect(ox + col, oy + row, 1, 1).fill(px[c]!);
     }
+  }
+}
+
+// the sunhat chars — drawn on their own layer so aftermath tinting (mud, canal
+// water, leaves) never touches the hat
+const HAT_CHARS = new Set(['y', 'Y']);
+const HELEN_BODY_PX = Object.fromEntries(Object.entries(HELEN_PX).filter(([k]) => !HAT_CHARS.has(k)));
+const HELEN_HAT_PX = Object.fromEntries(Object.entries(HELEN_PX).filter(([k]) => HAT_CHARS.has(k)));
+
+// A tiny 3×5 pixel font — just enough letters for heckling.
+const FONT: Record<string, [string, string, string, string, string]> = {
+  B: ['110', '101', '110', '101', '110'],
+  C: ['011', '100', '100', '100', '011'],
+  D: ['110', '101', '101', '101', '110'],
+  E: ['111', '100', '110', '100', '111'],
+  G: ['011', '100', '101', '101', '011'],
+  H: ['101', '101', '111', '101', '101'],
+  I: ['111', '010', '010', '010', '111'],
+  K: ['101', '110', '100', '110', '101'],
+  L: ['100', '100', '100', '100', '111'],
+  N: ['101', '111', '111', '111', '101'],
+  O: ['111', '101', '101', '101', '111'],
+  R: ['110', '101', '110', '110', '101'],
+  S: ['011', '100', '010', '001', '110'],
+  T: ['111', '010', '010', '010', '010'],
+  U: ['101', '101', '101', '101', '111'],
+  W: ['101', '101', '111', '111', '101'],
+  Y: ['101', '101', '010', '010', '010'],
+  "'": ['010', '010', '000', '000', '000'],
+  '!': ['010', '010', '010', '000', '010'],
+  ' ': ['000', '000', '000', '000', '000'],
+};
+
+function paintPixelText(g: Graphics, text: string, x: number, y: number, colour: number): void {
+  let cx = x;
+  for (const ch of text) {
+    const glyph = FONT[ch];
+    if (glyph) {
+      for (let row = 0; row < 5; row++) {
+        for (let col = 0; col < 3; col++) {
+          if (glyph[row]![col] === '1') g.rect(cx + col, y + row, 1, 1).fill(colour);
+        }
+      }
+    }
+    cx += 4;
   }
 }
 
@@ -195,8 +239,10 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
   shadow.rect(-4, 5, 8, 3).fill({ color: 0x000000, alpha: 0.18 });
   shadow.rect(-3, 4, 6, 5).fill({ color: 0x000000, alpha: 0.1 });
   const bike = new Graphics();
-  paintSprite(bike, HELEN_MAP, HELEN_PX, -5, -9); // top-down: front wheel up
-  helen.addChild(shadow, bike);
+  paintSprite(bike, HELEN_MAP, HELEN_BODY_PX, -5, -9); // top-down: front wheel up
+  const hat = new Graphics();
+  paintSprite(hat, HELEN_MAP, HELEN_HAT_PX, -5, -9); // the hat, forever pristine
+  helen.addChild(shadow, bike, hat);
   helen.scale.set(2); // pixel-doubled: reads at arm's length; hitbox is unchanged
   app.stage.addChild(helen);
 
@@ -516,38 +562,31 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
     return g;
   }
 
-  // "Oi!" — one heckle per person per journey when Helen buzzes them. Render-
-  // side state only: never touches the sim, so replays stay exact.
-  const yells = new Map<string, number>();
+  // Heckles — one per person per journey when Helen buzzes them, no sound, just
+  // a bubble. Render-side state only: never touches the sim, replays stay exact.
+  const yells = new Map<string, { until: number; text: string }>();
   let lastYellD = 0;
 
-  function drawOi(px: number, py: number): void {
-    const bx = Math.round(px) - 7;
+  function drawBubble(text: string, px: number, py: number): void {
+    const w = text.length * 4 + 3;
+    const bx = Math.max(2, Math.min(viewW - w - 2, Math.round(px) - Math.floor(w / 2)));
     const by = Math.round(py) - 22;
-    dynamic.rect(bx - 1, by - 1, 15, 11).fill(0x2e2e38); // border
-    dynamic.rect(bx, by, 13, 9).fill(0xf5f2e8); // bubble
-    dynamic.rect(bx + 2, by + 10, 2, 2).fill(0xf5f2e8); // tail
-    const lx = bx + 2;
-    const ly = by + 2;
-    dynamic.rect(lx, ly, 3, 1).fill(0x2e2e38); // O
-    dynamic.rect(lx, ly + 4, 3, 1).fill(0x2e2e38);
-    dynamic.rect(lx, ly + 1, 1, 3).fill(0x2e2e38);
-    dynamic.rect(lx + 2, ly + 1, 1, 3).fill(0x2e2e38);
-    dynamic.rect(lx + 4, ly, 1, 5).fill(0x2e2e38); // I
-    dynamic.rect(lx + 6, ly, 1, 3).fill(0x2e2e38); // !
-    dynamic.rect(lx + 6, ly + 4, 1, 1).fill(0x2e2e38);
+    dynamic.rect(bx - 1, by - 1, w + 2, 11).fill(0x2e2e38); // border
+    dynamic.rect(bx, by, w, 9).fill(0xf5f2e8); // bubble
+    dynamic.rect(Math.round(px) - 1, by + 10, 2, 2).fill(0xf5f2e8); // tail
+    paintPixelText(dynamic, text, bx + 2, by + 2, 0x2e2e38);
   }
 
-  function maybeYell(key: string, px: number, py: number, helenX: number, t: number, xThresh = 24): void {
-    const until = yells.get(key);
-    if (until !== undefined) {
-      if (t < until) drawOi(px, py);
+  function maybeYell(key: string, px: number, py: number, helenX: number, t: number, seed: number, xThresh = 24): void {
+    const yell = yells.get(key);
+    if (yell !== undefined) {
+      if (t < yell.until) drawBubble(yell.text, px, py);
       return; // each person only bothers once
     }
     if (Math.abs(px - helenX) < xThresh && Math.abs(py - helenY) < 22) {
-      yells.set(key, t + 1.3);
-      audio.oi();
-      drawOi(px, py);
+      const text = seed > 0.86 ? "LOOK WHERE YOU'RE GOING!" : seed > 0.68 ? 'BLOODY CYCLISTS!' : 'OI!';
+      yells.set(key, { until: t + (text.length > 5 ? 2 : 1.3), text });
+      drawBubble(text, px, py);
     }
   }
 
@@ -726,7 +765,7 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       }
       dynamic.rect(ax - 14, y0 + 4, 8, 6).fill(0x5a6a4a); // tackle box
       dynamic.rect(ax - 12, y0 + 6, 4, 2).fill(0x8a9a6a); // clasp
-      maybeYell(`ang${n}`, ax, y0, helenX, t, 18);
+      maybeYell(`ang${n}`, ax, y0, helenX, t, hash01(n * 131), 18);
     }
 
     // joggers, overtaken slowly: hi-vis vest, arms pumping
@@ -745,7 +784,7 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       dynamic.rect(jx - 2, jy, 6, 6).fill(jr > 0.6 ? 0x3a2e26 : 0x6a4a2f); // head
       dynamic.rect(jx - 7, jy + (ph ? -2 : 2), 2, 4).fill(0xe8b48c); // pumping arms
       dynamic.rect(jx + 5, jy + (ph ? 2 : -2), 2, 4).fill(0xe8b48c);
-      maybeYell(`jog${n}`, jx, jy, helenX, t);
+      maybeYell(`jog${n}`, jx, jy, helenX, t, hash01(n * 137));
     }
 
     // dog walkers, ambling: the dog out front on the lead, sniffing everything
@@ -782,7 +821,7 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       // the lead, straining back to the walker's hand
       dynamic.rect(wx + (dogx - wx) * 0.35, wy - 6 + (dogy - wy + 4) * 0.35, 2, 2).fill(0x3a3a44);
       dynamic.rect(wx + (dogx - wx) * 0.7, wy - 6 + (dogy - wy + 4) * 0.7, 2, 2).fill(0x3a3a44);
-      maybeYell(`dog${n}`, wx, wy, helenX, t);
+      maybeYell(`dog${n}`, wx, wy, helenX, t, hash01(n * 139));
     }
 
     // oncoming cyclists: breeze past on the other side of the path — pure
@@ -814,7 +853,7 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
           dynamic.rect(cx2 - 10 + col * 2, cy - 18 + row * 2, 2, 2).fill(STRANGER[ch]!);
         }
       }
-      maybeYell(`cyc${n}`, cx2, cy, helenX, t);
+      maybeYell(`cyc${n}`, cx2, cy, helenX, t, hash01(n * 149));
     }
 
     // a heron on the bank, rare — stands tall, flaps off as Helen approaches

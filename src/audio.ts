@@ -250,14 +250,6 @@ class GameAudio {
     const at = this.ctx.currentTime;
     this.tone(at, 110, 55, 0.09, 0.16);
   }
-
-  // a passer-by, aggrieved: a gruff two-note "Oi!"
-  oi(): void {
-    if (!this.ctx || this.ctx.state !== 'running') return;
-    const at = this.ctx.currentTime;
-    this.tone(at, 320, 240, 0.07, 0.14, 'square');
-    this.tone(at + 0.08, 260, 150, 0.13, 0.16, 'square');
-  }
 }
 
 export const audio = new GameAudio();
