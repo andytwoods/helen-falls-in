@@ -54,8 +54,8 @@ function die(): void {
     hudBest.textContent = `best ${best.toFixed(1)}s`;
     audio.bell();
   }
-  // canal deaths: brief splash, then the card drops in over the frog cutscene
-  const cardDelayMs = cause === 'canal' ? 900 : 0;
+  // every death plays its cutscene first; the card drops in over it
+  const cardDelayMs = 900;
   const thisDeath = deadAt;
   const fell = {
     canal: '<b>SPLOOSH!</b> 🐸<br>Helen fell into the canal.',

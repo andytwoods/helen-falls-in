@@ -724,6 +724,120 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
     }
   }
 
+  // Crash cutscene: upside down up a tree, hanging by her knees from a branch.
+  // Shared by tree, bush and hedge deaths — it's all woodland in the end.
+  function drawTreeCut(e: number): void {
+    const cx = centreX;
+    dynamic.rect(0, 0, viewW, viewH).fill(PAL.canopyShade);
+    for (let k = 0; k < 170; k++) {
+      const lx = hash01(k * 7) * viewW;
+      const ly = hash01(k * 11) * viewH;
+      dynamic.rect(lx, ly, 2, 2).fill(
+        hash01(k * 3) < 0.5 ? PAL.canopy : hash01(k * 5) < 0.5 ? PAL.canopyLight : PAL.undergrowthDark,
+      );
+    }
+    // the branch she ended up on
+    const by = Math.round(viewH * 0.28);
+    dynamic.rect(0, by, viewW, 6).fill(0x77542f);
+    dynamic.rect(0, by + 2, viewW, 1).fill(0x8a6a42);
+    dynamic.rect(cx - 50, by - 2, 5, 2).fill(0x77542f); // knots
+    dynamic.rect(cx + 38, by + 6, 4, 3).fill(0x77542f);
+
+    const swing = Math.sin(e * 1.7) * 3; // she sways gently
+    // shins hooked over the branch
+    dynamic.rect(cx - 9, by - 3, 4, 5).fill(0xe8b48c);
+    dynamic.rect(cx + 5, by - 3, 4, 5).fill(0xe8b48c);
+    dynamic.rect(cx - 9, by + 4, 18, 8).fill(0x35507d); // shorts
+    dynamic.rect(cx - 7 + swing * 0.3, by + 12, 14, 12).fill(0xc0392b); // torso
+    dynamic.rect(cx - 11 + swing * 0.8, by + 14, 3, 13).fill(0xe8b48c); // dangling arms
+    dynamic.rect(cx + 8 + swing * 0.8, by + 14, 3, 13).fill(0xe8b48c);
+    // head, upside down: mouth a small startled o ABOVE the eyes; hair hangs down
+    const hx = cx - 6 + swing;
+    dynamic.rect(hx, by + 24, 12, 10).fill(0xe8b48c);
+    dynamic.rect(hx + 4, by + 26, 3, 2).fill(0x8a4a2f); // o
+    for (const ex of [1, 7]) {
+      dynamic.rect(hx + ex, by + 29, 4, 3).fill(0xf5f2e8);
+      dynamic.rect(hx + ex + 1, by + 29, 2, 3).fill(0x3f6fd6); // blue
+      dynamic.rect(hx + ex + 1, by + 30, 2, 1).fill(0x2e2e38);
+    }
+    dynamic.rect(hx - 1, by + 34, 14, 4).fill(0xf2d16b); // hair, obeying gravity
+    dynamic.rect(hx + 1, by + 38, 3, 3).fill(0xf2d16b);
+    dynamic.rect(hx + 8, by + 38, 3, 2).fill(0xf2d16b);
+
+    // the hat made its own way down
+    const hatY = Math.min(viewH - 26, by + 60 + e * 30);
+    dynamic.rect(cx + 26, hatY, 30, 3).fill(0xf9e29a);
+    dynamic.rect(cx + 32, hatY - 5, 18, 5).fill(0xf2d16b);
+
+    // dislodged leaves, drifting down
+    for (let k = 0; k < 5; k++) {
+      const ly = (e * 16 + k * 37) % (viewH + 10);
+      const lx = cx - 50 + k * 24 + Math.sin(e * 1.2 + k * 2) * 8;
+      dynamic.rect(lx, ly, 2, 2).fill(PAL.canopyLight);
+    }
+
+    // a robin considers her situation
+    dynamic.rect(cx - 44, by - 4, 4, 4).fill(0x4a4a52);
+    dynamic.rect(cx - 44, by - 2, 2, 2).fill(0xd9683d);
+    dynamic.rect(cx - 41, by - 4, 1, 1).fill(0x2e2e38); // eye
+  }
+
+  // Ditch cutscene: sat waist-deep in the mud, hat still on, only the eyes clean.
+  function drawMudCut(e: number): void {
+    const cx = centreX;
+    const wy = Math.round(viewH * 0.58);
+    dynamic.rect(0, 0, viewW, viewH).fill(PAL.ditchMud);
+    for (let y = 0; y < viewH; y += 3) {
+      const h = hash01(y * 13 + 7);
+      if (h < 0.55) {
+        dynamic.rect(h * viewW * 1.6 - 20, y, 5 + h * 20, 1).fill(h < 0.28 ? 0x6f5c3a : 0x9a8458);
+      }
+    }
+    // grassy ditch lips top and bottom
+    for (let k = 0; k < 26; k++) {
+      const gx = hash01(k * 17) * viewW;
+      dynamic.rect(gx, hash01(k * 19) * 10, 2, 4).fill(PAL.undergrowth);
+      dynamic.rect(gx, viewH - 8 - hash01(k * 23) * 6, 2, 5).fill(PAL.undergrowth);
+    }
+    // the wet channel she's sitting in
+    dynamic.rect(0, wy + 6, viewW, 16).fill(0x6f5c3a);
+
+    const bob = Math.round(Math.sin(e * 2) * 1);
+    const hy = wy + bob;
+    // mud-caked body and head — one brown lump with a hat
+    dynamic.rect(cx - 16, hy - 14, 32, 20).fill(0x7a6644);
+    dynamic.rect(cx - 13, hy - 18, 26, 6).fill(0x7a6644); // slumped shoulders
+    dynamic.rect(cx - 10, hy - 34, 20, 17).fill(0x7a6644); // head
+    // hat still on, splattered
+    dynamic.rect(cx - 20, hy - 38, 40, 3).fill(0xf9e29a);
+    dynamic.rect(cx - 12, hy - 46, 24, 8).fill(0xf2d16b);
+    dynamic.rect(cx - 6, hy - 44, 4, 3).fill(0x7a6644); // splat
+    dynamic.rect(cx + 6, hy - 38, 5, 2).fill(0x7a6644);
+    dynamic.rect(cx - 16, hy - 37, 3, 2).fill(0x7a6644);
+    // the only clean part of her: blinking blue eyes
+    const blink = (e * 2.2) % 3.4 < 0.22;
+    for (const ex of [-8, 2]) {
+      if (blink) {
+        dynamic.rect(cx + ex, hy - 27, 6, 1).fill(0x5a4a30);
+      } else {
+        dynamic.rect(cx + ex, hy - 29, 6, 4).fill(0xf5f2e8);
+        dynamic.rect(cx + ex + 1, hy - 29, 4, 3).fill(0x3f6fd6);
+        dynamic.rect(cx + ex + 2, hy - 28, 2, 2).fill(0x2e2e38);
+      }
+    }
+    // mud drips from the brim and chin
+    for (let k = 0; k < 4; k++) {
+      const dy = (e * 20 + k * 11) % 24;
+      dynamic.rect(cx - 14 + k * 9, hy - 36 + dy, 1, 2).fill(0x6f5c3a);
+    }
+    // a bubble surfaces beside her, occasionally
+    const bub = (e * 0.9) % 1;
+    if (bub < 0.7) {
+      const br = 1 + bub * 3;
+      dynamic.rect(cx - 30 - br / 2, hy + 10 - br / 2, br, br).fill(0x9a8458);
+    }
+  }
+
   function draw(prev: SimState, curr: SimState, alpha: number, p: Params, path: PathCurve, deathElapsed = 0): void {
     const d = lerp(prev.d, curr.d, alpha);
 
@@ -758,12 +872,19 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
 
     drawDynamic(d, curr.t, path);
 
-    // canal death: in-world splash, then a brief full-screen frog cutscene
-    const splashing = !curr.alive && curr.cause === 'canal';
-    helen.visible = !splashing;
-    if (splashing) {
-      if (deathElapsed < 0.55) drawSplashScene(deathElapsed, curr, path);
-      else drawCutscene(deathElapsed); // backdrop until restart; card sits on top
+    // death cutscenes (backdrop until restart; the card sits on top): canal gets
+    // splash → frog close-up; crashes hold the frozen frame a beat, then cut
+    helen.visible = true;
+    if (!curr.alive && curr.cause) {
+      if (curr.cause === 'canal') {
+        helen.visible = false;
+        if (deathElapsed < 0.55) drawSplashScene(deathElapsed, curr, path);
+        else drawCutscene(deathElapsed);
+      } else if (deathElapsed >= 0.35) {
+        helen.visible = false;
+        if (curr.cause === 'ditch') drawMudCut(deathElapsed);
+        else drawTreeCut(deathElapsed);
+      }
     }
 
     // Helen: interpolate sim states for smooth render at any refresh rate.
