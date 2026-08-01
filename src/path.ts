@@ -11,8 +11,15 @@
 // vergeObjects(d0, d1): trees/bushes with centre distance in [d0, d1]; `cx` is px
 //   from screen centre (negative = left), `w` the drawn/collidable blob width.
 
+import { PUBS } from './journey';
 import { mulberry32 } from './rng';
 import { DITCH_GAP_PX, PATH_HALF_W_PX } from './sim';
+
+// Pubs claim a clearing: no collidable scenery or ditch near them, so nothing
+// invisible lurks under the building the renderer draws there.
+function nearPub(d: number, range: number): boolean {
+  return PUBS.some((pub) => Math.abs(d - pub.d) < range);
+}
 
 export interface VergeObject {
   kind: 'tree' | 'bush';
@@ -235,6 +242,7 @@ export function createPath(seed: number, meander: number, narrow: number, downhi
     const roll = r();
     if (roll < 0.15) return null; // the odd gap so it isn't a perfectly solid wall
     const d = slot * TREE_SLOT_PX + r() * (TREE_SLOT_PX - 14);
+    if (nearPub(d, 70)) return null;
     const bx = VERGE_MIN_X + lane * laneW + r() * (laneW + 4);
     const size = r();
     const kind = roll < 0.6 ? 'bush' : 'tree';
@@ -255,6 +263,7 @@ export function createPath(seed: number, meander: number, narrow: number, downhi
       return PATH_HALF_W_PX * widthFactor(d);
     },
     ditchWidthAt(d) {
+      if (nearPub(d, 60)) return 0;
       const slot = Math.floor(d / DITCH_SLOT_PX);
       const r = mulberry32(((slot ^ seed) ^ 0x2c9277b5) >>> 0);
       if (r() >= DITCH_CHANCE) return 0;

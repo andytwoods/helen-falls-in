@@ -2,13 +2,15 @@
 
 **▶ Play it now: <https://andytwoods.github.io/helen-falls-in/>**
 
-A brutally difficult one-button retro arcade game. Helen is cycling along a canal
-towpath on a very wobbly bike — canal on one side, hedgerow on the other — and she
-is almost certainly about to fall in.
+A one-button pixel-art journey, set in the Surrey countryside, UK: Helen is
+cycling the Wey Navigation from West Byfleet to Godalming on a very wobbly
+bike, calling at the pubs along the way. Canal on one side, hedgerow on the
+other. The whole ride takes about ten minutes — falling in is allowed (climb
+out, carry on), and every pub you reach becomes a starting point for next time.
 
 One input: **hold space** (desktop) or **touch anywhere** (mobile). Every press
-steers against the bike's visible tilt… then rapidly past it. The whole game is a
-fight against your own over-corrections. First-timers last about 5 seconds.
+steers against the bike's visible tilt… then rapidly past it. It's a small
+meditation — for you; perhaps less so for Helen.
 
 See `OVERVIEW.md` for the design and `docs/STEERING.md` for the steering model and
 its tuning history (every constant is validated by a headless bot harness).

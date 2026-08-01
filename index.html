@@ -61,6 +61,51 @@
       padding: 12px 18px;
       border-radius: 8px;
     }
+    #intro {
+      position: fixed;
+      inset: 0;
+      z-index: 4;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      background: rgba(15, 25, 40, 0.3); /* the canal drifts by behind */
+      backdrop-filter: blur(2px);
+      -webkit-backdrop-filter: blur(2px);
+      color: #eef;
+      text-align: center;
+    }
+    #intro.hidden { display: none; }
+    .intro-panel {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 11px;
+      background: rgba(12, 20, 34, 0.78);
+      border: 1px solid rgba(242, 209, 107, 0.35);
+      border-radius: 14px;
+      padding: 24px 26px;
+      max-width: 340px;
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+    }
+    #intro h1 {
+      font-size: 23px;
+      letter-spacing: 3px;
+      color: #f2d16b;
+      text-shadow: 2px 2px 0 rgba(0, 0, 0, 0.55);
+    }
+    #intro .route { color: #9fc7ff; font-size: 13px; letter-spacing: 1px; }
+    #intro .setting { color: #a8c8a0; font-size: 11.5px; font-style: italic; }
+    #intro .flourish { font-size: 15px; letter-spacing: 7px; }
+    #intro p { font-size: 12.5px; line-height: 1.6; color: #cdd6e4; }
+    #intro .zen { color: #a8d8a8; font-style: italic; }
+    #intro-best { font-size: 12px; color: #e8c840; }
+    #pub-buttons { display: flex; flex-direction: column; gap: 6px; width: 240px; }
+    #pub-buttons button {
+      background: #8a6a2c; color: #fff; border: none; border-radius: 8px;
+      padding: 9px; font-size: 13px; cursor: pointer;
+    }
+    #pub-buttons button:disabled { background: #2a3347; color: #5a6478; cursor: default; }
     #sound-toggle {
       position: fixed;
       bottom: calc(10px + env(safe-area-inset-bottom));
@@ -79,10 +124,30 @@
 <body>
   <div id="game"></div>
   <div id="hud">
-    <span id="hud-time">0.0s</span>
-    <span id="hud-best">best 0.0s</span>
+    <span id="hud-time">0:00</span>
+    <span id="hud-best"></span>
   </div>
   <div id="overlay"><div id="overlay-text"></div></div>
+  <div id="intro">
+    <div class="intro-panel">
+      <h1>HELEN FALLS IN</h1>
+      <div class="route">West Byfleet → Godalming, along the Wey</div>
+      <div class="setting">Set in the Surrey countryside, UK</div>
+      <div class="flourish">🚲 🌾 🦆 🍺</div>
+      <p>
+        Helen is cycling the towpath to Godalming, calling at the pubs on the way.
+        The whole ride takes about ten minutes — if she stays out of the water.
+      </p>
+      <p>
+        One button. Hold to steer against her lean; release; breathe.
+        Falling in is allowed: climb out, carry on. Reach a pub and you can start
+        from it next time.
+      </p>
+      <p class="zen">This game is a small meditation. (For you. Perhaps less so for Helen!)</p>
+      <div id="intro-best"></div>
+      <div id="pub-buttons"></div>
+    </div>
+  </div>
   <button id="sound-toggle">🔊</button>
   <script type="module" src="/src/main.ts"></script>
 </body>

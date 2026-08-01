@@ -7,6 +7,7 @@
 // drawn identically by both neighbours — no seams whatever the z-order.
 
 import { Application, Container, Graphics } from 'pixi.js';
+import { PUBS } from './journey';
 import type { Params } from './params';
 import type { PathCurve } from './path';
 import { DITCH_GAP_PX, visualLean, type SimState } from './sim';
@@ -230,6 +231,51 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
 
   const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 
+  // A canalside pub from above: tiled gable roof with chimney, beer garden with
+  // picnic benches, a parasol and barrels, gravel spur down to the towpath, and
+  // a sign by the gate. Pubs live in the static chunks like all world geometry.
+  function paintPub(g: Graphics, path: PathCurve, pubD: number): void {
+    const cy = -pubD;
+    const leftE = centreX + path.centreAt(pubD) - path.halfWidthAt(pubD);
+    // trampled beer-garden ground, then the gravel spur to the towpath
+    g.rect(4, cy - 32, 42, 64).fill(0xc4a878);
+    g.rect(36, cy - 4, Math.max(2, leftE - 36), 9).fill(PAL.pathSand);
+    g.rect(36, cy + 4, Math.max(2, leftE - 36), 1).fill(PAL.pathEdge);
+    // the building: gabled tile roof, ridge, eaves, chimney
+    g.rect(0, cy - 29, 38, 40).fill(0x5a3a2e); // eaves shadow
+    g.rect(1, cy - 28, 17, 38).fill(0x9a5a44); // sunny slope
+    g.rect(18, cy - 28, 19, 38).fill(0x7d4736); // shaded slope
+    g.rect(17, cy - 28, 2, 38).fill(0xb87a5a); // ridge
+    for (let ty = cy - 24; ty < cy + 8; ty += 6) {
+      g.rect(2, ty, 15, 1).fill(0x8a4e3a); // tile courses
+      g.rect(19, ty + 3, 17, 1).fill(0x6d3e30);
+    }
+    g.rect(26, cy - 24, 8, 8).fill(0x8a8a90); // chimney
+    g.rect(28, cy - 22, 4, 4).fill(0x3a3a44);
+    g.rect(38, cy - 2, 4, 9).fill(0x77542f); // doormat at the garden door
+    // beer garden: picnic benches, a parasol, barrels by the wall
+    for (const [bx2, by2] of [
+      [39, cy - 24],
+      [41, cy + 12],
+    ] as const) {
+      g.rect(bx2 - 2, by2 - 3, 10, 2).fill(0x77542f); // bench
+      g.rect(bx2 - 2, by2 + 6, 10, 2).fill(0x77542f);
+      g.rect(bx2 - 1, by2, 8, 5).fill(0x8a6a42); // table
+    }
+    g.rect(36, cy - 28, 13, 11).fill(0xf0e0c0); // parasol over the first bench
+    g.rect(40, cy - 28, 3, 11).fill(0xd94f3d); // stripe
+    g.rect(42, cy - 23, 2, 2).fill(0x5a3a2e); // pole
+    g.rect(38, cy + 24, 5, 5).fill(0x6a4a2f); // barrels
+    g.rect(44, cy + 22, 5, 5).fill(0x6a4a2f);
+    g.rect(38, cy + 26, 5, 1).fill(0x8a6a42); // hoops
+    g.rect(44, cy + 24, 5, 1).fill(0x8a6a42);
+    // the sign by the gate
+    g.rect(leftE - 7, cy - 12, 3, 8).fill(0x5a4a3a); // post
+    g.rect(leftE - 11, cy - 19, 10, 7).fill(0xf0e0c0); // board
+    g.rect(leftE - 9, cy - 17, 4, 3).fill(0xd94f3d); // the painted something
+    g.rect(leftE - 11, cy - 13, 10, 1).fill(0x8a6a42); // board frame
+  }
+
   // ---- static world chunk: everything that is a pure function of distance ----
   // Content is drawn at world y = −D (screen y = worldLayer.y − D).
   function buildChunk(idx: number, p: Params, path: PathCurve): Graphics {
@@ -452,6 +498,11 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       }
     }
 
+    // pubs (drawn last: their clearing is kept free of collidable scenery)
+    for (const pub of PUBS) {
+      if (pub.d >= lo - 40 && pub.d <= hi + 40) paintPub(g, path, pub.d);
+    }
+
     return g;
   }
 
@@ -611,23 +662,23 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       if (y0 < -10 || y0 > viewH + 10) continue;
       const bank = centreX + path.centreAt(aD) + path.halfWidthAt(aD);
       const ax = bank - 2; // sat right on the edge
-      const twitch = (t * 0.5 + ar * 7) % 5 < 0.3 ? 1 : 0;
-      dynamic.rect(ax - 3, y0 - 3, 6, 6).fill(ar > 0.75 ? 0x6d7a8c : 0x7a5c48); // shoulders/jacket
-      dynamic.rect(ax - 2, y0 - 4, 4, 1).fill(ar > 0.75 ? 0x5a6675 : 0x66493a); // rounded
-      dynamic.rect(ax - 2, y0 + 3, 4, 1).fill(ar > 0.75 ? 0x5a6675 : 0x66493a);
-      dynamic.rect(ax + 3, y0 - 2, 4, 1).fill(0x3a3a44); // legs, dangling bankward
-      dynamic.rect(ax + 3, y0 + 1, 4, 1).fill(0x3a3a44);
-      dynamic.rect(ax - 2, y0 - 2, 4, 4).fill(0x4a4a52); // flat cap from above
-      dynamic.rect(ax - 1, y0 - 1, 1, 1).fill(0x6a6a78); // cap button
-      dynamic.rect(ax + 5, y0, 13, 1).fill(0x8a6a42); // rod, straight out over the water
-      const floatX = ax + 19 + twitch;
+      const twitch = (t * 0.5 + ar * 7) % 5 < 0.3 ? 2 : 0;
+      dynamic.rect(ax - 6, y0 - 6, 12, 12).fill(ar > 0.75 ? 0x6d7a8c : 0x7a5c48); // shoulders/jacket
+      dynamic.rect(ax - 4, y0 - 8, 8, 2).fill(ar > 0.75 ? 0x5a6675 : 0x66493a); // rounded
+      dynamic.rect(ax - 4, y0 + 6, 8, 2).fill(ar > 0.75 ? 0x5a6675 : 0x66493a);
+      dynamic.rect(ax + 6, y0 - 4, 8, 2).fill(0x3a3a44); // legs, dangling bankward
+      dynamic.rect(ax + 6, y0 + 2, 8, 2).fill(0x3a3a44);
+      dynamic.rect(ax - 4, y0 - 4, 8, 8).fill(0x4a4a52); // flat cap from above
+      dynamic.rect(ax - 2, y0 - 2, 2, 2).fill(0x6a6a78); // cap button
+      dynamic.rect(ax + 10, y0, 22, 1).fill(0x8a6a42); // rod, straight out over the water
+      const floatX = ax + 34 + twitch;
       const floatY = y0 + Math.round(Math.sin(t * 1.4 + ar * 9));
-      dynamic.rect(floatX, floatY, 2, 2).fill(PAL.flowerRed); // float
+      dynamic.rect(floatX, floatY, 3, 3).fill(PAL.flowerRed); // float
       if ((t * 1.4 + ar * 9) % 6 < 0.5) {
-        dynamic.rect(floatX - 2, floatY - 2, 6, 1).fill(PAL.waterRipple); // ripple off the float
+        dynamic.rect(floatX - 3, floatY - 3, 8, 1).fill(PAL.waterRipple); // ripple off the float
       }
-      dynamic.rect(ax - 7, y0 + 2, 4, 3).fill(0x5a6a4a); // tackle box
-      dynamic.rect(ax - 6, y0 + 3, 2, 1).fill(0x8a9a6a); // clasp
+      dynamic.rect(ax - 14, y0 + 4, 8, 6).fill(0x5a6a4a); // tackle box
+      dynamic.rect(ax - 12, y0 + 6, 4, 2).fill(0x8a9a6a); // clasp
     }
 
     // joggers, overtaken slowly: hi-vis vest, arms pumping
@@ -642,10 +693,10 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       const jD = d + rel;
       const jx = centreX + path.centreAt(jD) + (jr > 0.77 ? 0.6 : -0.6) * path.halfWidthAt(jD);
       const ph = Math.floor(t * 6 + jr * 4) % 2;
-      dynamic.rect(jx - 2, jy - 1, 5, 4).fill(jr > 0.7 ? 0xffb03a : 0xd8e84a); // hi-vis
-      dynamic.rect(jx - 1, jy, 3, 3).fill(jr > 0.6 ? 0x3a2e26 : 0x6a4a2f); // head
-      dynamic.rect(jx - 3, jy + (ph ? -1 : 1), 1, 2).fill(0xe8b48c); // pumping arms
-      dynamic.rect(jx + 3, jy + (ph ? 1 : -1), 1, 2).fill(0xe8b48c);
+      dynamic.rect(jx - 4, jy - 2, 10, 8).fill(jr > 0.7 ? 0xffb03a : 0xd8e84a); // hi-vis
+      dynamic.rect(jx - 2, jy, 6, 6).fill(jr > 0.6 ? 0x3a2e26 : 0x6a4a2f); // head
+      dynamic.rect(jx - 7, jy + (ph ? -2 : 2), 2, 4).fill(0xe8b48c); // pumping arms
+      dynamic.rect(jx + 5, jy + (ph ? 2 : -2), 2, 4).fill(0xe8b48c);
     }
 
     // dog walkers, ambling: the dog out front on the lead, sniffing everything
@@ -661,19 +712,20 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       const wx = centreX + path.centreAt(wD) + (wr > 0.76 ? 0.55 : -0.55) * path.halfWidthAt(wD);
       const coat = wr > 0.7 ? 0x8c5a7a : 0x5a6d8c;
       const swing = Math.floor(t * 3 + wr * 5) % 2;
-      dynamic.rect(wx - 2, wy - 2, 5, 5).fill(coat); // coat/shoulders
-      dynamic.rect(wx - 1, wy - 1, 3, 3).fill(0x4a3a2e); // head
-      dynamic.rect(wx - 3, wy + (swing ? 0 : 1), 1, 2).fill(0xe8b48c); // arm swing
+      dynamic.rect(wx - 4, wy - 4, 10, 10).fill(coat); // coat/shoulders
+      dynamic.rect(wx - 2, wy - 2, 6, 6).fill(0x4a3a2e); // head
+      dynamic.rect(wx - 7, wy + (swing ? 0 : 2), 2, 4).fill(0xe8b48c); // arm swing
       const weave = Math.sin(t * 1.1 + wr * 8);
-      const dogx = wx + weave * 5;
-      const dogy = wy - 11;
+      const dogx = wx + weave * 8;
+      const dogy = wy - 20;
       const dogCol = wr > 0.6 ? 0x8a6a4a : 0xe8dcc8;
-      dynamic.rect(dogx - 2, dogy, 4, 3).fill(dogCol); // body
-      dynamic.rect(dogx - 1 + (weave > 0 ? 1 : -1), dogy - 2, 2, 2).fill(dogCol); // head, mid-sniff
-      dynamic.rect(dogx + 2, dogy + 2 + (Math.floor(t * 8) % 2), 1, 1).fill(dogCol); // wagging tail
+      dynamic.rect(dogx - 4, dogy, 8, 6).fill(dogCol); // body
+      dynamic.rect(dogx - 2 + (weave > 0 ? 3 : -3), dogy - 4, 4, 4).fill(dogCol); // head, mid-sniff
+      dynamic.rect(dogx + 3, dogy + 5 + (Math.floor(t * 8) % 2), 2, 2).fill(dogCol); // wagging tail
+      dynamic.rect(dogx - 4, dogy + 5, 3, 1).fill(wr > 0.6 ? 0x6d523a : 0xc4b49a); // paws hint
       // the lead, straining
-      dynamic.rect(wx + (dogx - wx) * 0.35, wy - 3 + (dogy - wy + 3) * 0.35, 1, 1).fill(0x3a3a44);
-      dynamic.rect(wx + (dogx - wx) * 0.7, wy - 3 + (dogy - wy + 3) * 0.7, 1, 1).fill(0x3a3a44);
+      dynamic.rect(wx + (dogx - wx) * 0.35, wy - 6 + (dogy - wy + 6) * 0.35, 2, 2).fill(0x3a3a44);
+      dynamic.rect(wx + (dogx - wx) * 0.7, wy - 6 + (dogy - wy + 6) * 0.7, 2, 2).fill(0x3a3a44);
     }
 
     // oncoming cyclists: breeze past on the other side of the path — pure
@@ -946,6 +998,30 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
     }
   }
 
+  // Leg tracker, top right: Helen's dot winding up a little track from the last
+  // pub (bottom) to the next pint (top). One leg at a time — no numbers.
+  function drawLegMap(d: number): void {
+    let next = PUBS.findIndex((pub) => pub.d > d);
+    if (next === -1) next = PUBS.length - 1;
+    const from = PUBS[Math.max(0, next - 1)]!.d;
+    const to = PUBS[next]!.d;
+    const frac = Math.max(0, Math.min(1, (d - from) / Math.max(1, to - from)));
+    const mapX = viewW - 9;
+    const mapTop = 10;
+    const mapH = 42;
+    dynamic.rect(mapX - 5, mapTop - 4, 11, mapH + 10).fill({ color: 0x1c2431, alpha: 0.4 });
+    for (let i = 0; i <= mapH; i += 1) {
+      dynamic.rect(mapX + Math.sin(i * 0.22) * 1.5, mapTop + i, 1, 1).fill(0x8fb3d8); // the track
+    }
+    dynamic.rect(mapX - 1, mapTop + mapH - 1, 3, 3).fill(0x5a6478); // where she set off
+    dynamic.rect(mapX - 1, mapTop - 2, 3, 3).fill(0xe8c840); // 🍺 the next pint
+    dynamic.rect(mapX, mapTop - 1, 1, 1).fill(0xf5f2e8); // its glint
+    const hy2 = mapTop + mapH - frac * mapH;
+    const hx2 = mapX + Math.sin((mapH - frac * mapH) * 0.22) * 1.5;
+    dynamic.rect(hx2 - 1, hy2 - 1, 3, 3).fill(0xc0392b); // Helen
+    dynamic.rect(hx2, hy2 - 1, 1, 1).fill(0xf2d16b); // her hat
+  }
+
   function draw(prev: SimState, curr: SimState, alpha: number, p: Params, path: PathCurve, deathElapsed = 0): void {
     const d = lerp(prev.d, curr.d, alpha);
 
@@ -979,6 +1055,7 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
     }
 
     drawDynamic(d, curr.t, path);
+    drawLegMap(d);
 
     // death cutscenes (backdrop until restart; the card sits on top): canal gets
     // splash → frog close-up; crashes hold the frozen frame a beat, then cut

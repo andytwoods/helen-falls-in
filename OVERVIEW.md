@@ -75,6 +75,20 @@ Chosen approach:
 
 ## Decisions (2026-08-01)
 
+- **The game is a journey (major reframe):** Helen cycles the Wey Navigation
+  from **West Byfleet to Godalming** — set in the Surrey countryside, UK —
+  calling at real pubs on the way (The Anchor at Pyrford Lock, The New Inn at
+  Send, The White House in Guildford, The Parrot at Shalford, ending at The
+  Star in Godalming). The full ride is ~10 minutes. **Falling in is not the
+  end**: Helen climbs out and rides on; the HUD counts dunkings and total time.
+  Pubs are checkpoints — reaching one unlocks it as a future starting point
+  (persisted). Pubs are rendered in-world (their clearings are kept free of
+  collidable scenery), an intro screen frames the journey as **a small
+  meditation** ("For you. Perhaps less so for Helen!"), and a minimal leg
+  tracker (dot on a track to the next pint) replaces score chrome. The
+  time-based difficulty ramp caps at ×1.9 (~50s) so minute nine is
+  hard-but-fair. Fastest full-journey time + fewest falls is the record.
+
 - **Layout change (supersedes "water on both sides" above):** the canal is on the
   **right** of the towpath only; on the **left** is a grassy verge with trees,
   bushes, drainage ditches and a hedgerow. Falling right is the splash + frog

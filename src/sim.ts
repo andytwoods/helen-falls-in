@@ -133,7 +133,9 @@ export function step(s: SimState, p: Params, gaussian: () => number, path: PathS
   s.noise += (-s.noise / p.noiseTau) * dt + p.noiseSigma * Math.sqrt(dt) * gaussian();
   s.drift += (-s.drift / p.driftTau) * dt + p.driftSigma * Math.sqrt(dt) * gaussian();
 
-  const ramp = 1 + p.difficultyRamp * s.t;
+  // Ramp caps at ~50s (×1.9): the ride is a ten-minute journey now, and minute
+  // nine should be hard-but-fair, not unphysical.
+  const ramp = 1 + p.difficultyRamp * Math.min(s.t, 50);
   // Zones: fringe grass on either path edge is heavy; fully off the left edge is
   // the ridable verge, where steering goes v. choppy (worse than grass).
   const onVerge = s.x < -1;
