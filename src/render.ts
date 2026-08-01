@@ -630,6 +630,52 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       dynamic.rect(ax - 6, y0 + 3, 2, 1).fill(0x8a9a6a); // clasp
     }
 
+    // joggers, overtaken slowly: hi-vis vest, arms pumping
+    for (let n = Math.floor(d / 2000) - 1; n <= Math.floor((d + helenY) / 2000) + 2; n++) {
+      const jr = hash01(n * 103 + 17);
+      if (jr < 0.55) continue;
+      const event = n * 2000 + jr * 500;
+      if (event < 600) continue;
+      const rel = 420 - 0.61 * (d - event); // she gains at bike-minus-jogger pace
+      if (rel < -60 || rel > viewH + 40) continue;
+      const jy = helenY - rel;
+      const jD = d + rel;
+      const jx = centreX + path.centreAt(jD) + (jr > 0.77 ? 0.6 : -0.6) * path.halfWidthAt(jD);
+      const ph = Math.floor(t * 6 + jr * 4) % 2;
+      dynamic.rect(jx - 2, jy - 1, 5, 4).fill(jr > 0.7 ? 0xffb03a : 0xd8e84a); // hi-vis
+      dynamic.rect(jx - 1, jy, 3, 3).fill(jr > 0.6 ? 0x3a2e26 : 0x6a4a2f); // head
+      dynamic.rect(jx - 3, jy + (ph ? -1 : 1), 1, 2).fill(0xe8b48c); // pumping arms
+      dynamic.rect(jx + 3, jy + (ph ? 1 : -1), 1, 2).fill(0xe8b48c);
+    }
+
+    // dog walkers, ambling: the dog out front on the lead, sniffing everything
+    for (let n = Math.floor(d / 3100) - 1; n <= Math.floor((d + helenY) / 3100) + 2; n++) {
+      const wr = hash01(n * 113 + 23);
+      if (wr < 0.5) continue;
+      const event = n * 3100 + wr * 600;
+      if (event < 600) continue;
+      const rel = 420 - 0.87 * (d - event); // walking pace: overtaken briskly
+      if (rel < -60 || rel > viewH + 50) continue;
+      const wy = helenY - rel;
+      const wD = d + rel;
+      const wx = centreX + path.centreAt(wD) + (wr > 0.76 ? 0.55 : -0.55) * path.halfWidthAt(wD);
+      const coat = wr > 0.7 ? 0x8c5a7a : 0x5a6d8c;
+      const swing = Math.floor(t * 3 + wr * 5) % 2;
+      dynamic.rect(wx - 2, wy - 2, 5, 5).fill(coat); // coat/shoulders
+      dynamic.rect(wx - 1, wy - 1, 3, 3).fill(0x4a3a2e); // head
+      dynamic.rect(wx - 3, wy + (swing ? 0 : 1), 1, 2).fill(0xe8b48c); // arm swing
+      const weave = Math.sin(t * 1.1 + wr * 8);
+      const dogx = wx + weave * 5;
+      const dogy = wy - 11;
+      const dogCol = wr > 0.6 ? 0x8a6a4a : 0xe8dcc8;
+      dynamic.rect(dogx - 2, dogy, 4, 3).fill(dogCol); // body
+      dynamic.rect(dogx - 1 + (weave > 0 ? 1 : -1), dogy - 2, 2, 2).fill(dogCol); // head, mid-sniff
+      dynamic.rect(dogx + 2, dogy + 2 + (Math.floor(t * 8) % 2), 1, 1).fill(dogCol); // wagging tail
+      // the lead, straining
+      dynamic.rect(wx + (dogx - wx) * 0.35, wy - 3 + (dogy - wy + 3) * 0.35, 1, 1).fill(0x3a3a44);
+      dynamic.rect(wx + (dogx - wx) * 0.7, wy - 3 + (dogy - wy + 3) * 0.7, 1, 1).fill(0x3a3a44);
+    }
+
     // oncoming cyclists: breeze past on the other side of the path — pure
     // scenery, no collision (moving-obstacle fairness is a v1.5 question).
     // None in the opening stretch: the calm start stays uncluttered.
