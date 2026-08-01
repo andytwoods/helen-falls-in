@@ -82,11 +82,11 @@ const HELEN_MAP = [
   '....HH....',
   'BssHHHHssB',
   '..rrrrrr..',
-  '.rryyyyrr.',
-  '..yyYyyy..',
-  '..yyyyyy..',
-  '..yYyyyy..',
-  '..Ryyyyr..',
+  '.rYYYYYYr.',
+  '.YyyyyyyY.',
+  '.YyyYyyyY.',
+  '.YyyyyyyY.',
+  '.rYYYYYYr.',
   '..rrrrrr..',
   '..Rrrrrr..',
   '...bbbb...',
@@ -159,7 +159,9 @@ function paintCanopy(g: Graphics, cx: number, cy: number, w: number, seedN: numb
 
 export interface Renderer {
   app: Application;
-  draw(prev: SimState, curr: SimState, alpha: number, p: Params, path: PathCurve): void;
+  // deathElapsed: wall-clock seconds since death (0 while riding) — drives the
+  // splash / frog-on-the-hat sequence when Helen goes in the canal.
+  draw(prev: SimState, curr: SimState, alpha: number, p: Params, path: PathCurve, deathElapsed?: number): void;
 }
 
 export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
@@ -618,7 +620,57 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
     }
   }
 
-  function draw(prev: SimState, curr: SimState, alpha: number, p: Params, path: PathCurve): void {
+  // The signature death: a splash, spreading rings, then just Helen's eyes above
+  // the waterline beneath her floating yellow sunhat — with the frog on top.
+  function drawSplashScene(e: number, curr: SimState, path: PathCurve): void {
+    const sx = Math.round(centreX + path.centreAt(curr.d) + curr.x * curr.halfW + 5);
+    const sy = helenY;
+
+    if (e < 0.45) {
+      // the big daft sploosh: white core + flung droplets
+      const burst = e / 0.45;
+      const core = Math.max(1, 6 * (1 - burst));
+      dynamic.rect(sx - core / 2, sy - core / 2, core, core).fill(PAL.flowerWhite);
+      for (let k = 0; k < 10; k++) {
+        const a = (k / 10) * Math.PI * 2 + hash01(k) * 0.5;
+        const rr = 3 + burst * (10 + hash01(k * 3) * 8);
+        dynamic.rect(sx + Math.cos(a) * rr, sy + Math.sin(a) * rr * 0.7, 1, 1).fill(
+          k % 3 === 0 ? PAL.waterGlint : PAL.flowerWhite,
+        );
+      }
+    }
+
+    // spreading ripple rings through the whole scene
+    for (let ring = 0; ring < 3; ring++) {
+      const rr = e * 26 - ring * 7;
+      if (rr < 3 || rr > 24) continue;
+      for (let k = 0; k < 14; k++) {
+        const a = (k / 14) * Math.PI * 2;
+        dynamic.rect(sx + Math.cos(a) * rr, sy + Math.sin(a) * rr * 0.6, 1, 1).fill(PAL.waterRipple);
+      }
+    }
+
+    if (e >= 0.7) {
+      const bob = Math.round(Math.sin(e * 2.6) * 1);
+      const y = sy + bob;
+      // the sunhat, floating: brim at the waterline, crown above
+      dynamic.rect(sx - 5, y - 1, 10, 2).fill(0xf9e29a); // brim
+      dynamic.rect(sx - 3, y - 3, 6, 2).fill(0xf2d16b); // crown
+      dynamic.rect(sx - 2, y - 4, 4, 1).fill(0xf2d16b);
+      // just her eyes above the water, under the brim
+      dynamic.rect(sx - 3, y + 1, 6, 1).fill(0xe8b48c);
+      dynamic.rect(sx - 2, y + 1, 1, 1).fill(0x2e2e38);
+      dynamic.rect(sx + 1, y + 1, 1, 1).fill(0x2e2e38);
+      // the frog, already in residence on the crown
+      dynamic.rect(sx - 2, y - 6, 4, 2).fill(0x5da936);
+      dynamic.rect(sx + 1, y - 5, 1, 1).fill(0x4c8c2b); // haunch
+      const blink = (e * 2) % 3.1 < 0.22;
+      dynamic.rect(sx - 2, y - 7, 1, 1).fill(blink ? 0x4c8c2b : 0xf5f2e8);
+      dynamic.rect(sx + 1, y - 7, 1, 1).fill(blink ? 0x4c8c2b : 0xf5f2e8);
+    }
+  }
+
+  function draw(prev: SimState, curr: SimState, alpha: number, p: Params, path: PathCurve, deathElapsed = 0): void {
     const d = lerp(prev.d, curr.d, alpha);
 
     // new run / view / tuning invalidates the cache
@@ -651,6 +703,11 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
     }
 
     drawDynamic(d, curr.t, path);
+
+    // canal death: Helen vanishes under the water and the splash scene plays
+    const splashing = !curr.alive && curr.cause === 'canal';
+    helen.visible = !splashing;
+    if (splashing) drawSplashScene(deathElapsed, curr, path);
 
     // Helen: interpolate sim states for smooth render at any refresh rate.
     // World offset is x·halfW — normalised x alone would jitter through pinches.

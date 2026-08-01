@@ -54,18 +54,24 @@ function die(): void {
     hudBest.textContent = `best ${best.toFixed(1)}s`;
     audio.bell();
   }
+  // canal deaths play the splash/frog scene first; the card waits its turn
+  const cardDelayMs = cause === 'canal' ? 1300 : 0;
+  const thisDeath = deadAt;
   const fell = {
     canal: '<b>SPLOOSH!</b> 🐸<br>Helen fell into the canal.',
     ditch: '<b>SQUELCH!</b> 🥾<br>Helen rode into the ditch.',
     tree: '<b>THUNK!</b> 🌳<br>Helen rode straight into a tree.',
     bush: '<b>CRASH!</b> 🌿<br>Helen tangled into a bush.',
     hedge: '<b>CRUNCH!</b> 🌿<br>Helen ploughed into the hedge.',
-  }[state.cause ?? 'canal'];
+  }[cause];
   overlayText.innerHTML =
     `${fell}<br><br>` +
     `${run.duration.toFixed(1)}s &nbsp;·&nbsp; ${run.taps} taps (${run.meanTapRateHz.toFixed(1)}/s)<br>` +
     `best ${best.toFixed(1)}s &nbsp;·&nbsp; seed ${run.seed}<br><br>tap to ride again`;
-  overlay.classList.add('show');
+  setTimeout(() => {
+    // only if this death is still the one on screen (no restart happened)
+    if (phase === 'dead' && deadAt === thisDeath) overlay.classList.add('show');
+  }, cardDelayMs);
 }
 
 async function boot(): Promise<void> {
@@ -113,7 +119,7 @@ async function boot(): Promise<void> {
     if (phase === 'riding') {
       hudTime.textContent = `${state.t.toFixed(1)}s`;
     }
-    renderer.draw(prevState, state, acc / DT, params, path);
+    renderer.draw(prevState, state, acc / DT, params, path, phase === 'dead' ? (now - deadAt) / 1000 : 0);
   });
 }
 
