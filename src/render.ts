@@ -600,8 +600,9 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       }
     }
 
-    // anglers on the bank: sat at the water's edge, rod out over the canal,
-    // float bobbing — occasionally the rod twitches (nothing is ever caught)
+    // anglers on the bank, seen from above: cap-circle over shoulders, legs
+    // toward the water, rod a thin line out over the canal to a bobbing float —
+    // occasionally it twitches (nothing is ever caught)
     for (let n = Math.floor((d + helenY - viewH) / 1700) - 1; n <= Math.floor((d + helenY) / 1700) + 1; n++) {
       const ar = hash01(n * 91 + 5);
       if (ar < 0.5) continue;
@@ -609,28 +610,34 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       const y0 = helenY - (aD - d);
       if (y0 < -10 || y0 > viewH + 10) continue;
       const bank = centreX + path.centreAt(aD) + path.halfWidthAt(aD);
-      const ax = bank - 3;
+      const ax = bank - 2; // sat right on the edge
       const twitch = (t * 0.5 + ar * 7) % 5 < 0.3 ? 1 : 0;
-      dynamic.rect(ax - 2, y0 - 2, 4, 4).fill(ar > 0.75 ? 0x6d7a8c : 0x7a5c48); // jacket
-      dynamic.rect(ax - 1, y0 - 5, 3, 3).fill(0xe8b48c); // head
-      dynamic.rect(ax - 2, y0 - 6, 4, 2).fill(0x4a4a52); // flat cap
-      dynamic.rect(ax + 2, y0 + 1, 3, 2).fill(0x3a3a44); // legs to the water
-      for (let i = 0; i < 8; i++) {
-        dynamic.rect(ax + 3 + i, y0 - 3 - Math.round(i * 0.5) + (i > 4 ? twitch : 0), 1, 1).fill(0x8a6a42); // rod
+      dynamic.rect(ax - 3, y0 - 3, 6, 6).fill(ar > 0.75 ? 0x6d7a8c : 0x7a5c48); // shoulders/jacket
+      dynamic.rect(ax - 2, y0 - 4, 4, 1).fill(ar > 0.75 ? 0x5a6675 : 0x66493a); // rounded
+      dynamic.rect(ax - 2, y0 + 3, 4, 1).fill(ar > 0.75 ? 0x5a6675 : 0x66493a);
+      dynamic.rect(ax + 3, y0 - 2, 4, 1).fill(0x3a3a44); // legs, dangling bankward
+      dynamic.rect(ax + 3, y0 + 1, 4, 1).fill(0x3a3a44);
+      dynamic.rect(ax - 2, y0 - 2, 4, 4).fill(0x4a4a52); // flat cap from above
+      dynamic.rect(ax - 1, y0 - 1, 1, 1).fill(0x6a6a78); // cap button
+      dynamic.rect(ax + 5, y0, 13, 1).fill(0x8a6a42); // rod, straight out over the water
+      const floatX = ax + 19 + twitch;
+      const floatY = y0 + Math.round(Math.sin(t * 1.4 + ar * 9));
+      dynamic.rect(floatX, floatY, 2, 2).fill(PAL.flowerRed); // float
+      if ((t * 1.4 + ar * 9) % 6 < 0.5) {
+        dynamic.rect(floatX - 2, floatY - 2, 6, 1).fill(PAL.waterRipple); // ripple off the float
       }
-      const floatX = ax + 14;
-      const floatY = y0 + 2 + Math.round(Math.sin(t * 1.4 + ar * 9)) + twitch;
-      dynamic.rect(floatX, y0 - 6 + twitch, 1, floatY - (y0 - 6)).fill(0xcfd8e0); // line
-      dynamic.rect(floatX, floatY, 1, 2).fill(PAL.flowerRed); // float
-      dynamic.rect(ax - 5, y0 + 1, 3, 2).fill(0x5a6a4a); // tackle box
+      dynamic.rect(ax - 7, y0 + 2, 4, 3).fill(0x5a6a4a); // tackle box
+      dynamic.rect(ax - 6, y0 + 3, 2, 1).fill(0x8a9a6a); // clasp
     }
 
     // oncoming cyclists: breeze past on the other side of the path — pure
-    // scenery, no collision (moving-obstacle fairness is a v1.5 question)
+    // scenery, no collision (moving-obstacle fairness is a v1.5 question).
+    // None in the opening stretch: the calm start stays uncluttered.
     for (let n = Math.floor(d / 2600) - 1; n <= Math.floor((d + helenY) / 2600) + 2; n++) {
       const cr = hash01(n * 97 + 13);
       if (cr < 0.5) continue;
       const event = n * 2600 + cr * 300;
+      if (event < 2500) continue; // first stranger ≈28s in, at the earliest
       const rel = 520 - 2.6 * (d - event); // closes at Helen-speed + their speed
       if (rel < -80 || rel > viewH + 60) continue;
       const cy = helenY - rel;
