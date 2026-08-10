@@ -1,4 +1,5 @@
 import { audio } from './audio';
+import { haptics } from './haptics';
 import { attachControls } from './input';
 import { formatTime, journeyBest, PUBS, recordJourney, unlockedPub, unlockPub } from './journey';
 import { createPath, type PathCurve } from './path';
@@ -7,7 +8,7 @@ import { createRenderer } from './render';
 import { createState, press, pressDir, release, step, DT, type SimState } from './sim';
 import { gaussianFrom, mulberry32 } from './rng';
 import { Telemetry } from './telemetry';
-import { attachSoundToggle } from './ui';
+import { attachHapticsToggle, attachSoundToggle } from './ui';
 
 const params = { ...DEFAULT_PARAMS };
 const telemetry = new Telemetry();
@@ -130,6 +131,7 @@ function die(): void {
   if (cause === 'canal' || cause === 'croc') audio.splash();
   else if (cause === 'ditch') audio.squelch();
   else audio.crunch();
+  haptics.crash();
   const fell = {
     canal: '<b>SPLOOSH!</b> 🐸<br>Helen fell into the canal.',
     ditch: '<b>SQUELCH!</b> 🥾<br>Helen rode into the ditch.',
@@ -165,6 +167,7 @@ function arriveAtPub(): void {
   cardAt = performance.now();
   unlockPub(nextPub);
   audio.bell();
+  haptics.bell();
   const pub = PUBS[nextPub]!;
   if (nextPub === PUBS.length - 1) {
     phase = 'done';
@@ -228,6 +231,7 @@ async function boot(): Promise<void> {
   });
 
   attachSoundToggle(audio);
+  attachHapticsToggle(haptics);
   for (const [btn, alcoholic] of [
     [drinkCocktailBtn, true],
     [drinkLemonadeBtn, false],
@@ -243,6 +247,7 @@ async function boot(): Promise<void> {
 
   let last = performance.now();
   let acc = 0;
+  let lastRockJoltT = -1; // rock contact lingers across steps — one jolt per encounter, not per frame
 
   renderer.app.ticker.add(() => {
     const now = performance.now();
@@ -253,7 +258,17 @@ async function boot(): Promise<void> {
       if (phase === 'riding') {
         prevState = { ...state };
         step(state, params, gaussian, path);
-        if (state.alive && path.bumpsBetween(prevState.d, state.d).length > 0) audio.thud();
+        if (
+          state.alive &&
+          path.bumpsBetween(prevState.d, state.d).length + path.rootKicksBetween(prevState.d, state.d).length > 0
+        ) {
+          audio.thud();
+          haptics.thud();
+        }
+        if (state.alive && (state.hitPoo || (state.hitRock && state.t - lastRockJoltT > 0.3))) {
+          if (state.hitRock) lastRockJoltT = state.t;
+          haptics.jolt();
+        }
         if (!state.alive) die();
         else if (state.d >= PUBS[nextPub]!.d) arriveAtPub();
       }

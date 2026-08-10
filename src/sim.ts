@@ -30,6 +30,8 @@ export interface SimState {
   halfW: number; // current corridor half-width, px — x is normalised to this
   speedFactor: number; // 1 normally; >1 mid-downhill
   booze: number; // cocktails minus lemonades: wobble scales with it, plus a weave
+  hitRock: boolean; // transient, true only on steps where a rock threw her — for feedback, no physics
+  hitPoo: boolean;  // transient, true only on steps where a poo connected — for feedback, no physics
 }
 
 // canal: fell in the water (right). croc: pulled in (late journey). The rest
@@ -40,7 +42,7 @@ export function createState(): SimState {
   return {
     x: 0, vx: 0, steer: 0, dir: 1, hold: 0, held: false,
     noise: 0, drift: 0, t: 0, d: 0, alive: true, fellSide: 0, cause: null, lastReleaseT: -1e9,
-    halfW: PATH_HALF_W_PX, speedFactor: 1, booze: 0,
+    halfW: PATH_HALF_W_PX, speedFactor: 1, booze: 0, hitRock: false, hitPoo: false,
   };
 }
 
@@ -121,6 +123,8 @@ const VERGE_EDGE_PX = 74;
 export function step(s: SimState, p: Params, gaussian: () => number, path: PathSampler, dt: number = DT): void {
   if (!s.alive) return;
   s.t += dt;
+  s.hitRock = false;
+  s.hitPoo = false;
   const dPrev = s.d;
   // cocktails are also fuel: each one adds pace (and shortens reaction time)
   s.speedFactor = path.speedFactorAt(s.d) * (1 + 0.06 * Math.min(5, s.booze));
@@ -204,6 +208,7 @@ export function step(s: SimState, p: Params, gaussian: () => number, path: PathS
       if (Math.abs(s.d - rock.d) < rock.r + 3 && Math.abs(helenPx - rockPx) < rock.r + WHEEL_HALF_PX) {
         const dir = Math.sign(helenPx - rockPx) || 1;
         s.vx = dir * Math.max(Math.abs(s.vx), p.rockKick * widthScale);
+        s.hitRock = true;
       }
     }
   }
@@ -214,6 +219,7 @@ export function step(s: SimState, p: Params, gaussian: () => number, path: PathS
     if (Math.abs(s.x - poo.lat) * w < 9) {
       s.vx += poo.dir * 1.1 * widthScale;
       s.steer = Math.max(-1, Math.min(1, s.steer + poo.dir * 0.18));
+      s.hitPoo = true;
     }
   }
 

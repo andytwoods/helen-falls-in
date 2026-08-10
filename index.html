@@ -158,7 +158,7 @@
       font-family: inherit;
     }
     #drinks button.lemonade { background: #33415c; }
-    #sound-toggle {
+    #sound-toggle, #haptics-toggle {
       position: fixed;
       bottom: calc(10px + env(safe-area-inset-bottom));
       right: 10px;
@@ -170,6 +170,11 @@
       padding: 8px 12px;
       font-size: 16px;
       touch-action: none;
+    }
+    #haptics-toggle { right: 62px; }
+    /* haptics only exist on things you hold — hide the toggle where a mouse hovers */
+    @media (hover: hover) and (pointer: fine) {
+      #haptics-toggle { display: none; }
     }
   </style>
 </head>
@@ -203,6 +208,7 @@
     <button id="drink-cocktail"></button>
     <button id="drink-lemonade" class="lemonade">🥤 A sensible lemonade</button>
   </div>
+  <button id="haptics-toggle">📳</button>
   <button id="sound-toggle">🔊</button>
   <script type="module" src="/src/main.ts"></script>
 </body>
