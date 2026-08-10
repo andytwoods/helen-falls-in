@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Helen Falls In</string>
+    <string name="title_activity_main">Helen Falls In</string>
+    <string name="package_name">com.andytwoods.helenfallsin</string>
+    <string name="custom_url_scheme">com.andytwoods.helenfallsin</string>
+</resources>
