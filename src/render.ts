@@ -65,7 +65,8 @@ const PAL = {
 };
 
 // Helen, top-down, on a bike that reads as a bike: thin wheels, a visible
-// frame, wide handlebars — and a round sunhat (slightly smaller these days).
+// frame, wide handlebars — and a round sunhat: light brim edge, red ribbon
+// ring where the crown rises, crown shadow on the brim's sun-away side.
 const HELEN_PX: Record<string, number> = {
   T: 0x3a3a44, // tyre
   H: 0x565664, // frame metal
@@ -73,8 +74,10 @@ const HELEN_PX: Record<string, number> = {
   s: 0xe8b48c, // skin
   r: 0xc0392b, // red top
   R: 0xa32e22, // red top, shaded
-  y: 0xf2d16b, // sunhat crown
-  Y: 0xf9e29a, // sunhat brim/highlight
+  y: 0xf2d16b, // sunhat straw
+  Y: 0xf9e29a, // sunhat brim edge / sun-catch
+  u: 0xddad4e, // sunhat straw in shade (crown shadow on the brim)
+  n: 0xb03a2e, // hatband ribbon
   b: 0x35507d, // shorts
 };
 // Authored at final resolution (1px cells, drawn at scale 1) — rotating chunky
@@ -88,16 +91,16 @@ const HELEN_MAP = [
   '..BBssHHHHHHssBB..',
   '.......rrrr.......',
   '......YYYYYY......',
-  '....YyyyyyyyY....'.padEnd(18, '.'),
-  '...YyyyyyyyyyyY...',
-  '..YyyyyyyyyyyyyY..',
-  '..YyyYYyyyyyyyyY..',
-  '..YyyyyyyyyyyyyY..',
-  '..YyyyyyyyyyyyyY..',
-  '..YyyyyyyyyyyyyY..',
-  '..YyyyyyyyyyyyyY..',
-  '...YyyyyyyyyyyY...',
-  '....YyyyyyyyY....'.padEnd(18, '.'),
+  '....YYyyyyyYY.....',
+  '...YYyynnnnyyYY...',
+  '..YYyynyyyynyyYY..',
+  '..YyynYYyyyynyyY..',
+  '..YyynyyyyyynyyY..',
+  '..YyynyyyyyynuyY..',
+  '..YyynyyyyyynuyY..',
+  '..YYyynyyyynuuYY..',
+  '...YYyynnnnuuYY...',
+  '....YYyyyuuYY.....',
   '......YYYYYY......',
   '.......rRrr.......',
   '.......bbbb.......',
@@ -123,7 +126,7 @@ function paintSprite(g: Graphics, map: string[], px: Record<string, number>, ox:
 }
 
 // the sunhat chars — their own layer, so aftermath tinting never touches the hat
-const HAT_CHARS = new Set(['y', 'Y']);
+const HAT_CHARS = new Set(['y', 'Y', 'u', 'n']);
 const HELEN_BODY_PX = Object.fromEntries(Object.entries(HELEN_PX).filter(([k]) => !HAT_CHARS.has(k)));
 const HELEN_HAT_PX = Object.fromEntries(Object.entries(HELEN_PX).filter(([k]) => HAT_CHARS.has(k)));
 
@@ -1375,6 +1378,8 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
     const hatY = Math.min(viewH - 26, by + 60 + e * 30);
     screenG.rect(cx + 26, hatY, 30, 3).fill(0xf9e29a);
     screenG.rect(cx + 32, hatY - 5, 18, 5).fill(0xf2d16b);
+    screenG.rect(cx + 34, hatY - 7, 14, 2).fill(0xf2d16b);
+    screenG.rect(cx + 32, hatY - 2, 18, 2).fill(0xb03a2e);
     for (let k = 0; k < 5; k++) {
       const ly = (e * 16 + k * 37) % (viewH + 10);
       const lx = cx - 50 + k * 24 + Math.sin(e * 1.2 + k * 2) * 8;
@@ -1432,6 +1437,8 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
     }
   }
 
+  const pf = { frames: 0, slow: 0, builds: 0, worst: 0, worstBuild: 0, worstDyn: 0, lastLog: 0 };
+
   function draw(
     prev: SimState,
     curr: SimState,
@@ -1466,15 +1473,20 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
     helenWX = hp.x;
     helenWY = hp.y;
 
-    // ensure chunks around the camera exist (path distance window), building at
-    // most a couple per frame so scrolling never hitches on a build burst
+    // ensure chunks around the camera exist (path distance window). On-screen
+    // chunks build unconditionally (a hole is worse than a hitch); the ahead/
+    // behind prefetch ring builds at most ONE per frame — a single build is
+    // ~3-11ms on a phone-class CPU, so two in one frame blows the 60fps budget.
     const loIdx = Math.floor((d - 460) / CHUNK_PX);
     const hiIdx = Math.floor((d + 520) / CHUNK_PX);
+    const visLoIdx = Math.floor((d - 210) / CHUNK_PX);
+    const visHiIdx = Math.floor((d + 160) / CHUNK_PX);
     const nearIdx = Math.floor(d / CHUNK_PX);
     let built = 0;
     for (let span = 0; span <= Math.max(nearIdx - loIdx, hiIdx - nearIdx); span++) {
       for (const idx of span === 0 ? [nearIdx] : [nearIdx + span, nearIdx - span]) {
-        if (idx < loIdx || idx > hiIdx || chunks.has(idx) || built >= 2) continue;
+        if (idx < loIdx || idx > hiIdx || chunks.has(idx)) continue;
+        if (built >= 1 && (idx < visLoIdx || idx > visHiIdx)) continue;
         const g = buildChunk(idx, p, path);
         chunks.set(idx, g);
         worldLayer.addChildAt(g, 0);
@@ -1541,6 +1553,7 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
     } else {
       bike.tint = 0xffffff;
     }
+
   }
 
   return { app, draw };

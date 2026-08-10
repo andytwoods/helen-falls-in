@@ -104,6 +104,8 @@ const SPRITE_PX: Record<string, RGB> = {
   R: hex(0xa32e22),
   y: hex(0xf2d16b),
   Y: hex(0xf9e29a),
+  u: hex(0xddad4e),
+  n: hex(0xb03a2e),
   b: hex(0x35507d),
 };
 const HELEN_MAP = [
@@ -115,16 +117,16 @@ const HELEN_MAP = [
   '..BBssHHHHHHssBB..',
   '.......rrrr.......',
   '......YYYYYY......',
-  '....YyyyyyyyY.....',
-  '...YyyyyyyyyyyY...',
-  '..YyyyyyyyyyyyyY..',
-  '..YyyYYyyyyyyyyY..',
-  '..YyyyyyyyyyyyyY..',
-  '..YyyyyyyyyyyyyY..',
-  '..YyyyyyyyyyyyyY..',
-  '..YyyyyyyyyyyyyY..',
-  '...YyyyyyyyyyyY...',
-  '....YyyyyyyyY.....',
+  '....YYyyyyyYY.....',
+  '...YYyynnnnyyYY...',
+  '..YYyynyyyynyyYY..',
+  '..YyynYYyyyynyyY..',
+  '..YyynyyyyyynyyY..',
+  '..YyynyyyyyynuyY..',
+  '..YyynyyyyyynuyY..',
+  '..YYyynyyyynuuYY..',
+  '...YYyynnnnuuYY...',
+  '....YYyyyuuYY.....',
   '......YYYYYY......',
   '.......rRrr.......',
   '.......bbbb.......',
@@ -325,8 +327,82 @@ function writeOgImage(path: string): void {
   writePng(path, 1200, 630, img.data);
 }
 
+// ---- Capacitor launcher-icon sources (assets/, consumed by @capacitor/assets) ----
+// Android adaptive icons mask to a centre region ~66% of the canvas; keep the
+// hat inside that safe zone, with water filling the bleed.
+function writeAdaptiveForeground(path: string, size: number): void {
+  const grid = iconGrid();
+  const img = new Img(size, size, P.water);
+  const inset = Math.round(size * 0.2);
+  const inner = size - inset * 2;
+  for (let y = 0; y < inner; y++) {
+    for (let x = 0; x < inner; x++) {
+      img.px(inset + x, inset + y, grid[Math.floor((y * 16) / inner)]![Math.floor((x * 16) / inner)]!);
+    }
+  }
+  writePng(path, size, size, img.data);
+}
+
 mkdirSync('public', { recursive: true });
 writeIconSvg('public/favicon.svg');
 writeIconPng('public/favicon-64.png', 64);
 writeIconPng('public/apple-touch-icon.png', 180);
 writeOgImage('public/og.png');
+
+// Play Store listing: 1024×500 feature graphic — the og scene, squeezed.
+function writeFeatureGraphic(path: string): void {
+  const img = new Img(1024, 500, P.verge);
+  img.rect(0, 0, 360, 500, P.verge);
+  img.rect(330, 0, 26, 500, P.fringe);
+  img.rect(356, 0, 290, 500, P.sand);
+  img.rect(646, 0, 22, 500, P.fringe);
+  img.rect(668, 0, 8, 500, P.bank);
+  img.rect(676, 0, 348, 500, P.water);
+  for (const [x, y, w, h] of [
+    [40, 160, 100, 80],
+    [150, 340, 130, 90],
+  ] as const) {
+    img.rect(x, y, w, h, P.meadow);
+  }
+  for (const [x, y, c] of [
+    [70, 200, P.red],
+    [200, 380, P.cream],
+    [120, 300, P.pink],
+    [260, 180, P.red],
+  ] as Array<[number, number, RGB]>) {
+    img.rect(x, y, 12, 12, c);
+  }
+  for (const [x, y, r] of [
+    [80, 90, 48],
+    [230, 450, 42],
+  ] as const) {
+    for (let dy = -r; dy <= r; dy += 6) {
+      const half = Math.sqrt(Math.max(0, r * r - dy * dy));
+      img.rect(x - half, y + dy, half * 2, 6, P.canopy);
+    }
+    img.rect(x - r * 0.5, y - r * 0.5, r * 0.6, r * 0.35, P.canopyLight);
+  }
+  for (let k = 0; k < 40; k++) img.rect(360 + ((k * 137) % 260), (k * 251) % 500, 6, 6, P.sandDark);
+  for (let k = 0; k < 20; k++) img.rect(700 + ((k * 173) % 290), (k * 149) % 490, 40, 6, P.ripple);
+  paintSprite(img, 420, 130, 10);
+  img.rect(0, 24, 1024, 96, P.night);
+  img.rect(0, 120, 1024, 5, P.gold);
+  const title = 'HELEN FALLS IN';
+  const ts = 12;
+  const tx = Math.round((1024 - textWidth(title, ts)) / 2);
+  paintText(img, title, tx + 4, 44 + 4, ts, hex(0x0d1420));
+  paintText(img, title, tx, 44, ts, P.gold);
+  img.rect(0, 400, 1024, 5, P.gold);
+  img.rect(0, 405, 1024, 95, P.night);
+  const sub = 'A WOBBLY BICYCLE MEDITATION';
+  const ss = 7;
+  paintText(img, sub, Math.round((1024 - textWidth(sub, ss)) / 2), 434, ss, P.cream);
+  writePng(path, 1024, 500, img.data);
+}
+
+mkdirSync('assets', { recursive: true });
+writeIconPng('assets/icon-only.png', 1024);
+writeAdaptiveForeground('assets/icon-foreground.png', 1024);
+writePng('assets/icon-background.png', 1024, 1024, new Img(1024, 1024, P.water).data);
+writeIconPng('assets/play-icon-512.png', 512);
+writeFeatureGraphic('assets/play-feature.png');
