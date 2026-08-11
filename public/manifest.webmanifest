@@ -1,0 +1,16 @@
+{
+  "name": "Helen Falls In",
+  "short_name": "Helen",
+  "description": "A wobbly bicycle meditation: cycle the Wey towpath, pub by pub, stay dry.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#1c2431",
+  "theme_color": "#1c2431",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

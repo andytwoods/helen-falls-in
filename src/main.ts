@@ -1,3 +1,4 @@
+import { Capacitor } from '@capacitor/core';
 import { audio } from './audio';
 import { haptics } from './haptics';
 import { attachControls } from './input';
@@ -295,3 +296,9 @@ async function boot(): Promise<void> {
 }
 
 void boot();
+
+// PWA: offline cache + installability on the web. The native apps ship their
+// own bundle, so a service worker there would only get in the way.
+if ('serviceWorker' in navigator && !Capacitor.isNativePlatform()) {
+  window.addEventListener('load', () => void navigator.serviceWorker.register('./sw.js'));
+}

@@ -347,6 +347,9 @@ mkdirSync('public', { recursive: true });
 writeIconSvg('public/favicon.svg');
 writeIconPng('public/favicon-64.png', 64);
 writeIconPng('public/apple-touch-icon.png', 180);
+writeIconPng('public/icon-192.png', 192);
+writeIconPng('public/icon-512.png', 512);
+writeAdaptiveForeground('public/icon-maskable-512.png', 512);
 writeOgImage('public/og.png');
 
 // Play Store listing: 1024×500 feature graphic — the og scene, squeezed.
