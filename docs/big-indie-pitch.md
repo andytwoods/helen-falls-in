@@ -33,11 +33,11 @@ Check https://www.bigindiepitch.com/ for the London edition announcement.
   https://andytwoods.github.io/helen-falls-in/
 - **Elevator description (short)**:
   > A wobbly bicycle meditation. Cycle the real Wey towpath from West Byfleet
-  > to Godalming, pub by pub, without falling in the canal. One thumb, ten
+  > to Godalming, pub by pub, without falling in the canal. Two thumbs, ten
   > minutes, one very optimistic sunhat.
 - **Longer description**:
-  > Helen is cycling the Wey Navigation through the Surrey countryside. One
-  > thumb steers her perpetually wobbling bicycle; the canal is always exactly
+  > Helen is cycling the Wey Navigation through the Surrey countryside. Two
+  > thumbs steer her perpetually wobbling bicycle; the canal is always exactly
   > one overcorrection away. Falling in is allowed — climb out, drip dry,
   > carry on. Real pubs along the real waterway are checkpoints, and what
   > Helen drinks at them is up to you: a cocktail adds speed and wobble, a

@@ -26,7 +26,8 @@ also checkpoints — reach one and you can start there next time. You can buy
 Helen a drink, which makes her faster and much worse at cycling. Lemonade
 sobers her up.
 
-There's only one control: tap left or right to lean, while the bike wobbles
+The controls are just taps — left thumb to lean left, right thumb to lean
+right — while the bike wobbles
 and drifts towards the canal. Falling in isn't game over — Helen climbs out
 and drips for a bit. I balanced the handling with a headless test rig that
 plays 200 seeded runs after every change. Mash the screen and she's usually
