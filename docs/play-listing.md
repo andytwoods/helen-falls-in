@@ -31,7 +31,7 @@ completes. Asset files live in `assets/`; the signed AAB is
   > herons, dragonflies, hecklers, the occasional crocodile, and real pubs
   > along a real English waterway.
   >
-  > • One-button / one-thumb play
+  > • Two thumbs, two directions — that's the whole control scheme
   > • About ten minutes end to end, with checkpoints at real pubs
   > • Full journey record and personal bests
   > • No ads, no accounts, no data collection — works offline

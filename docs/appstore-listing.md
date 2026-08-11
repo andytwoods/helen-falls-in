@@ -22,7 +22,7 @@ project). Bundle ID: `com.andytwoods.helenfallsin`.
   > falling in. Ten minutes. No ads, no accounts.
 
 - Description: reuse the full description from docs/play-listing.md.
-- Keywords (100 chars): cycling,canal,pixel art,meditation,casual,one button,offline,pub,Surrey,relaxing
+- Keywords (100 chars): cycling,canal,pixel art,meditation,casual,two thumbs,offline,pub,Surrey,relaxing
 - Support URL: https://andytwoods.github.io/helen-falls-in/
 - Privacy policy URL: https://andytwoods.github.io/helen-falls-in/privacy.html
 

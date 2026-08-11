@@ -47,7 +47,7 @@ Check https://www.bigindiepitch.com/ for the London edition announcement.
   > play always loses to calm, patient corrections — it is a meditation
   > disguised as slapstick.
 - **What makes it unique (USP)**:
-  > 1. A one-button steering model deep enough that bots which panic die in
+  > 1. A tap-left/tap-right steering model deep enough that bots which panic die in
   >    4 s while patient play survives indefinitely — tuned against a
   >    200-seed automated harness, not vibes.
   > 2. Real geography: an actual named towpath with its actual pubs, which
@@ -68,7 +68,7 @@ Check https://www.bigindiepitch.com/ for the London edition announcement.
 
 1. **(0:00) Hook** — "Helen is cycling to the pub. That's it. That's the game.
    The catch: her bicycle wobbles, the canal is right there, and your entire
-   interface is one thumb." *(hand judge the phone, game already running)*
+   interface is two thumbs, one job each." *(hand judge the phone, game already running)*
 2. **(0:30) Let them play.** Say nothing for 45 seconds. The game teaches
    itself; the first dunking usually gets a laugh — and the death card jokes
    land better than any pitch line.
@@ -99,7 +99,7 @@ Check https://www.bigindiepitch.com/ for the London edition announcement.
 - **"Retention? Sessions?"** — Ten-minute full runs, checkpoint restarts,
   personal bests, full-journey record. It's a cup-of-tea game, not a
   engagement trap — deliberately.
-- **"Why one button?"** — Accessibility and depth: the constraint forces all
+- **"Why such minimal controls?"** — Accessibility and depth: the constraint forces all
   difficulty into timing and restraint, which is what makes it meditative.
 
 ## Asset checklist
