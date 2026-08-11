@@ -22,7 +22,7 @@ completes. Asset files live in `assets/`; the signed AAB is
   > Helen is cycling the Wey Navigation from West Byfleet to Godalming — about
   > ten minutes of towpath, if she stays out of the water.
   >
-  > One thumb steers her wobbly bicycle. Falling in is allowed: climb out,
+  > Tap left or right to steer her wobbly bicycle. Falling in is allowed: climb out,
   > carry on. Reach a pub and it becomes a starting point for next time — and
   > what Helen drinks there is up to you (a cocktail adds speed and wobble; a
   > sensible lemonade sobers her up).
